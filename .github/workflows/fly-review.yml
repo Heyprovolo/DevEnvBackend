@@ -1,0 +1,35 @@
+name: Deploy Review App
+on:
+  # Run this workflow on push to selected branches (not pull request events).
+  # Only deploy for the `staging` branch or the `flyio-new-files` branch.
+  push:
+    branches:
+      - "staging"
+      - "flyio-new-files"
+
+env:
+  FLY_API_TOKEN: ${{ secrets.FLY_AUTH_TOKEN }}
+
+jobs:
+  review_app:
+    runs-on: ubuntu-latest
+    # Only run one deployment at a time per branch/ref.
+    concurrency:
+      group: deploy-${{ github.ref_name }}
+
+    # Deploy to Fly.io for branch pushes.
+    environment:
+      name: staging
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+
+      - name: Install flyctl
+        run: curl -L https://fly.io/install.sh | sh
+
+      - name: Add flyctl to PATH
+        run: echo "$HOME/.fly/bin" >> $GITHUB_PATH
+
+      - name: Deploy to Fly.io
+        id: deploy
+        run: flyctl deploy --config fly.toml --remote-only --verbose
