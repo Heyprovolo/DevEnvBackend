@@ -12,7 +12,8 @@
     "decode-firebase-config": "ts-node ./src/scripts/decodeFirebaseConfig.ts",
     "seed-tiers": "ts-node ./src/cli/seed-tiers.ts",
     "migrate-beta-users": "ts-node ./src/cli/migrate-beta-users.ts",
-    "seed-user-polar-ids": "ts-node ./src/cli/seed-user-polar-ids.ts"
+    "seed-user-polar-ids": "ts-node ./src/cli/seed-user-polar-ids.ts",
+    "seed-providers": "ts-node ./src/cli/seed-providers.ts"
   },
   "keywords": [],
   "author": "",

@@ -19,7 +19,11 @@ declare global {
   }
 }
 
-export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+export async function authMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   const app = getFirebaseApp();
   const auth = getAuth(app);
 
@@ -36,13 +40,17 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
         const idToken = authHeader.replace("Bearer ", "");
         token = await auth.verifyIdToken(idToken);
       } else {
-        return res.status(401).json(newErrorResponse("Unauthorized", "No authentication provided"));
+        return res
+          .status(401)
+          .json(newErrorResponse("Unauthorized", "No authentication provided"));
       }
     }
   } catch (err) {
     return res
       .status(401)
-      .json(newErrorResponse("Unauthorized", "Invalid or expired token/session"));
+      .json(
+        newErrorResponse("Unauthorized", "Invalid or expired token/session")
+      );
   }
 
   // Attach user info to request
@@ -53,9 +61,15 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 }
 
 // Middleware to check if email is verified
-export async function emailVerificationMiddleware(req: Request, res: Response, next: NextFunction) {
+export async function emailVerificationMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   if (!req.userID) {
-    return res.status(401).json(newErrorResponse("Unauthorized", "Authentication required"));
+    return res
+      .status(401)
+      .json(newErrorResponse("Unauthorized", "Authentication required"));
   }
 
   try {
@@ -67,7 +81,9 @@ export async function emailVerificationMiddleware(req: Request, res: Response, n
     const docs = await userQuery.get();
 
     if (docs.empty || !docs.docs[0]) {
-      return res.status(404).json(newErrorResponse("User Not Found", "User account not found"));
+      return res
+        .status(404)
+        .json(newErrorResponse("User Not Found", "User account not found"));
     }
 
     const userData = docs.docs[0].data();
@@ -89,6 +105,11 @@ export async function emailVerificationMiddleware(req: Request, res: Response, n
     console.error("[emailVerificationMiddleware] Error:", err);
     return res
       .status(500)
-      .json(newErrorResponse("Internal Server Error", "Unable to verify email status"));
+      .json(
+        newErrorResponse(
+          "Internal Server Error",
+          "Unable to verify email status"
+        )
+      );
   }
 }

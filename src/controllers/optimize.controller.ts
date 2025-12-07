@@ -16,6 +16,10 @@ import {
   getProposalVersions,
   createProposalMDX,
   validateProposalResponse,
+  storeOptimizerHistory,
+  getUserOptimizerHistory,
+  getOptimizerHistoryById,
+  cleanupOldOptimizerHistory,
 } from "../utils/prompt.utils.ts";
 import { updateUserQuota, checkUserQuota } from "../utils/quota.utils.ts";
 import type { FeatureSlug } from "../types/tiers.ts";
@@ -35,6 +39,9 @@ import type {
 } from "../types/proposal.types.ts";
 import { getFirestore } from "firebase-admin/firestore";
 import { getFirebaseApp } from "../utils/getFirebaseApp.ts";
+import type { OptimizerType } from "../types/optimizer-history.ts";
+import { sendNotificationToUser } from "../services/notification.service.ts";
+import { NotificationCategory } from "../types/notification.ts";
 
 // Helper function to get user profile data (displayName, portfolioLink, professionalTitle) in one DB call
 async function getUserProfileData(
@@ -44,6 +51,7 @@ async function getUserProfileData(
   displayName: string | undefined;
   portfolioLink: string | null;
   professionalTitle: string | null;
+  tierId: string | null;
 }> {
   // Use displayName from token if available
   if (tokenDisplayName) {
@@ -55,13 +63,14 @@ async function getUserProfileData(
         .where("userId", "==", userId)
         .limit(1)
         .get();
-      
+
       if (!userSnap.empty && userSnap.docs[0]) {
         const userData = userSnap.docs[0].data();
         return {
           displayName: tokenDisplayName,
           portfolioLink: userData.portfolioLink || null,
           professionalTitle: userData.professionalTitle || null,
+          tierId: userData.tierId || null,
         };
       }
     } catch (err) {
@@ -74,9 +83,10 @@ async function getUserProfileData(
       displayName: tokenDisplayName,
       portfolioLink: null,
       professionalTitle: null,
+      tierId: null,
     };
   }
-  
+
   // Fetch all data from database if displayName not in token
   try {
     const app = getFirebaseApp();
@@ -86,13 +96,14 @@ async function getUserProfileData(
       .where("userId", "==", userId)
       .limit(1)
       .get();
-    
+
     if (!userSnap.empty && userSnap.docs[0]) {
       const userData = userSnap.docs[0].data();
       return {
         displayName: userData.displayName,
         portfolioLink: userData.portfolioLink || null,
         professionalTitle: userData.professionalTitle || null,
+        tierId: userData.tierId || null,
       };
     }
   } catch (err) {
@@ -101,11 +112,12 @@ async function getUserProfileData(
       err
     );
   }
-  
+
   return {
     displayName: undefined,
     portfolioLink: null,
     professionalTitle: null,
+    tierId: null,
   };
 }
 
@@ -208,23 +220,23 @@ export async function optimizeProfile(req: Request, res: Response) {
           );
         }
 
-      return res
-        .status(400)
-        .json(
-          newErrorResponse(
-            "Invalid Request",
+        return res
+          .status(400)
+          .json(
+            newErrorResponse(
+              "Invalid Request",
               "The prompt attempted to do something it shouldn't. Your quota has been deducted."
-          )
-        );
-    }
+            )
+          );
+      }
 
       // If validation error (400-level), return 400 status
       if (err instanceof ValidationError) {
-      return res
-        .status(400)
-        .json(
-          newErrorResponse(
-            "Validation Error",
+        return res
+          .status(400)
+          .json(
+            newErrorResponse(
+              "Validation Error",
               err.message ||
                 "Invalid request. Please check your input and try again."
             )
@@ -267,7 +279,59 @@ export async function optimizeProfile(req: Request, res: Response) {
       console.warn("Warning: Failed to update quota for user", userId, err);
     });
 
-    // 8. Return success immediately (quota update continues in background)
+    // 8. Store optimization history only for premium users (not starter/free)
+    try {
+      const profileData = await getUserProfileData(userId, req.userDisplayName);
+      const starterTierId = process.env.STARTER_TIER_ID || "starter";
+      const userTierId = profileData?.tierId || null;
+
+      if (userTierId && userTierId !== starterTierId) {
+        // Check for first optimization milestone
+        try {
+          const history = await getUserOptimizerHistory(userId, 1, 1);
+          if (history.total === 0) {
+            await sendNotificationToUser(
+              userId,
+              "Milestone Unlocked: First Optimization!",
+              "You've just optimized your first profile. You're a step closer to your goal!",
+              "/optimizer",
+              NotificationCategory.ACHIEVEMENT
+            );
+          }
+        } catch (err) {
+          console.error(
+            "Error checking/sending first optimization notification:",
+            err
+          );
+        }
+
+        // premium user - store optimizer history
+        storeOptimizerHistory({
+          userId,
+          optimizerType: "upwork",
+          originalInput: {
+            fullName: sanitizedFullName,
+            professionalTitle: sanitizedTitle,
+            content: sanitizedProfile,
+          },
+          response: parsedResponse,
+        }).catch((err) => {
+          console.warn("Failed to store optimizer history (upwork)", err);
+        });
+      } else {
+        // non-premium - skip storing history
+        console.debug(
+          `[optimizeProfile] Skipping optimizer history store for user ${userId} with tier ${userTierId}`
+        );
+      }
+    } catch (err) {
+      console.warn(
+        "Failed to check user tier before storing optimizer history",
+        err
+      );
+    }
+
+    // 9. Return success immediately (quota + history storing continue in background)
     return res
       .status(200)
       .json(
@@ -446,7 +510,59 @@ export async function optimizeLinkedIn(req: Request, res: Response) {
       console.warn("Warning: Failed to update quota for user", userId, err);
     });
 
-    // 8. Return success immediately (quota update continues in background)
+    // 8. Store optimization history (fire and forget)
+    // Only for premium users
+    try {
+      const profileData = await getUserProfileData(userId, req.userDisplayName);
+      const starterTierId = process.env.STARTER_TIER_ID || "starter";
+      const userTierId = profileData?.tierId || null;
+
+      if (userTierId && userTierId !== starterTierId) {
+        // Check for first optimization milestone (using getUserOptimizerHistory which is already imported)
+        try {
+          const history = await getUserOptimizerHistory(userId, 1, 1);
+          if (history.total === 0) {
+            await sendNotificationToUser(
+              userId,
+              "Milestone Unlocked: First Optimization!",
+              "You've just optimized your first profile. You're a step closer to your goal!",
+              "/optimizer",
+              NotificationCategory.ACHIEVEMENT
+            );
+          }
+        } catch (err) {
+          console.error(
+            "Error checking/sending first optimization notification:",
+            err
+          );
+        }
+
+        storeOptimizerHistory({
+          userId,
+          optimizerType: "linkedin",
+          originalInput: {
+            fullName: sanitizedFullName,
+            professionalTitle: sanitizedTitle,
+            content: sanitizedProfile,
+          },
+          response: parsedResponse,
+        }).catch((err) => {
+          console.warn("Failed to store optimizer history (linkedin)", err);
+        });
+      } else {
+        // non-premium - skip storing history
+        console.debug(
+          `[optimizeLinkedIn] Skipping optimizer history store for user ${userId} with tier ${userTierId}`
+        );
+      }
+    } catch (err) {
+      console.warn(
+        "Failed to check user tier before storing optimizer history (linkedin)",
+        err
+      );
+    }
+
+    // 9. Return success immediately (quota update continues in background)
     return res
       .status(200)
       .json(
@@ -466,6 +582,160 @@ export async function optimizeLinkedIn(req: Request, res: Response) {
           "Internal Server Error",
           "An error occurred. Please try again or contact support."
         )
+      );
+  }
+}
+
+// Get optimizer history (Upwork / LinkedIn) for authenticated user
+export async function getOptimizerHistory(req: Request, res: Response) {
+  try {
+    const userId = req.userID as string;
+    if (!userId) {
+      return res
+        .status(401)
+        .json(newErrorResponse("Unauthorized", "User not authenticated"));
+    }
+
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      type,
+    } = req.query as {
+      page?: any;
+      limit?: any;
+      search?: string;
+      type?: OptimizerType;
+    };
+
+    const pageNum = parseInt(page.toString(), 10);
+    const limitNum = parseInt(limit.toString(), 10);
+    if (pageNum < 1 || limitNum < 1 || limitNum > 50) {
+      return res
+        .status(400)
+        .json(
+          newErrorResponse(
+            "Invalid Request",
+            "Page must be >=1 and limit between 1 and 50"
+          )
+        );
+    }
+
+    const result = await getUserOptimizerHistory(
+      userId,
+      pageNum,
+      limitNum,
+      search,
+      type as OptimizerType | undefined
+    );
+
+    return res.status(200).json(
+      newSuccessResponse(
+        "Optimizer History Retrieved",
+        "Optimizer history retrieved successfully",
+        {
+          records: result.records,
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total: result.total,
+            hasMore: result.hasMore,
+          },
+        }
+      )
+    );
+  } catch (err) {
+    console.error("[getOptimizerHistory] Error", err);
+    return res
+      .status(500)
+      .json(
+        newErrorResponse(
+          "Internal Server Error",
+          "Failed to retrieve optimizer history"
+        )
+      );
+  }
+}
+
+// Get single optimizer history record
+export async function getOptimizerHistoryByIdController(
+  req: Request,
+  res: Response
+) {
+  try {
+    const userId = req.userID as string;
+    if (!userId) {
+      return res
+        .status(401)
+        .json(newErrorResponse("Unauthorized", "User not authenticated"));
+    }
+    const { recordId } = req.params;
+    if (!recordId) {
+      return res
+        .status(400)
+        .json(newErrorResponse("Invalid Request", "Record ID is required"));
+    }
+    const record = await getOptimizerHistoryById(userId, recordId);
+    if (!record) {
+      return res
+        .status(404)
+        .json(
+          newErrorResponse("Not Found", "Record not found or access denied")
+        );
+    }
+    return res
+      .status(200)
+      .json(
+        newSuccessResponse(
+          "Record Retrieved",
+          "Optimizer record retrieved successfully",
+          record
+        )
+      );
+  } catch (err) {
+    console.error("[getOptimizerHistoryByIdController] Error", err);
+    return res
+      .status(500)
+      .json(
+        newErrorResponse(
+          "Internal Server Error",
+          "Failed to retrieve optimizer record"
+        )
+      );
+  }
+}
+
+// Cron cleanup for optimizer history
+export async function cleanupOldOptimizerHistoryController(
+  req: Request,
+  res: Response
+) {
+  try {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const provided = req.headers["x-cron-secret"] as string | undefined;
+      if (!provided || provided !== secret) {
+        return res
+          .status(401)
+          .json(newErrorResponse("Unauthorized", "Invalid cron secret"));
+      }
+    }
+    const deleted = await cleanupOldOptimizerHistory(30);
+    return res.status(200).json(
+      newSuccessResponse(
+        "Cleanup Completed",
+        "Deleted optimizer history older than 30 days",
+        {
+          deleted,
+        }
+      )
+    );
+  } catch (err) {
+    console.error("[cleanupOldOptimizerHistoryController] Error", err);
+    return res
+      .status(500)
+      .json(
+        newErrorResponse("Internal Server Error", "Optimizer cleanup failed")
       );
   }
 }
@@ -528,7 +798,10 @@ export async function generateProposal(req: Request, res: Response) {
         getUserProfileData(userId, req.userDisplayName),
       ]);
     } catch (err: any) {
-      console.error("[generateProposal] Quota check or profile fetch error:", err);
+      console.error(
+        "[generateProposal] Quota check or profile fetch error:",
+        err
+      );
       return res
         .status(500)
         .json(
@@ -721,16 +994,33 @@ export async function generateProposal(req: Request, res: Response) {
     );
 
     // 7. Store proposal history and update quota in parallel (non-blocking for response)
+
+    // Check for first proposal milestone
+    try {
+      const history = await getUserProposalHistory(userId, 1, 1);
+      if (history.total === 0) {
+        await sendNotificationToUser(
+          userId,
+          "Milestone Unlocked: First Proposal!",
+          "You've successfully generated your first proposal. Start pitching the right way!",
+          "/proposal",
+          NotificationCategory.ACHIEVEMENT
+        );
+      }
+    } catch (err) {
+      console.error("Error checking/sending first proposal notification:", err);
+    }
+
     // Start both operations but don't wait for quota update
     const storePromise = storeProposalHistory(
-        userId,
-        {
-          client_name: sanitizedClientName,
-          job_title: sanitizedJobTitle,
-          proposal_tone: proposal_tone,
-          job_summary: sanitizedJobSummary,
-        },
-        proposalResponse
+      userId,
+      {
+        client_name: sanitizedClientName,
+        job_title: sanitizedJobTitle,
+        proposal_tone: proposal_tone,
+        job_summary: sanitizedJobSummary,
+      },
+      proposalResponse
     ).catch((err) => {
       console.warn(
         "Warning: Failed to store proposal history for user",
@@ -905,7 +1195,7 @@ export async function refineProposal(req: Request, res: Response) {
     // 2. Validate input
     const { proposalId, refinementType, newTone } =
       req.body as RefineProposalReq;
-    
+
     if (!proposalId || !refinementType) {
       return res
         .status(400)
@@ -914,7 +1204,7 @@ export async function refineProposal(req: Request, res: Response) {
             "Invalid Request",
             "Missing proposalId or refinementType"
           )
-      );
+        );
     }
 
     const validRefinementTypes: RefinementAction[] = [
@@ -924,7 +1214,7 @@ export async function refineProposal(req: Request, res: Response) {
       "improve_flow",
       "change_tone",
     ];
-    
+
     if (!validRefinementTypes.includes(refinementType)) {
       return res
         .status(400)
@@ -940,7 +1230,7 @@ export async function refineProposal(req: Request, res: Response) {
             "Invalid Request",
             "newTone required for change_tone refinement"
           )
-      );
+        );
     }
 
     // 3. Get proposal details
@@ -1022,7 +1312,7 @@ export async function refineProposal(req: Request, res: Response) {
             "AI Service Error",
             "Failed to refine proposal. Please try again."
           )
-      );
+        );
     }
 
     // 6. Parse AI response
@@ -1038,7 +1328,7 @@ export async function refineProposal(req: Request, res: Response) {
             "Processing Error",
             "Failed to process refined proposal."
           )
-      );
+        );
     }
 
     // 6.5. Validate and create MDX content
@@ -1064,12 +1354,12 @@ export async function refineProposal(req: Request, res: Response) {
     return res
       .status(200)
       .json(
-      newSuccessResponse(
-        "Proposal Refined",
-        "Proposal refined successfully",
-        refinedProposal
-      )
-    );
+        newSuccessResponse(
+          "Proposal Refined",
+          "Proposal refined successfully",
+          refinedProposal
+        )
+      );
   } catch (err) {
     console.error("[refineProposal] Error:", err);
     return res
@@ -1079,7 +1369,7 @@ export async function refineProposal(req: Request, res: Response) {
           "Internal Server Error",
           "An error occurred while refining the proposal."
         )
-    );
+      );
   }
 }
 
@@ -1105,13 +1395,13 @@ export async function getProposalVersionsController(
 
     const versions = await getProposalVersions(proposalId, userId);
 
-    return res
-      .status(200)
-      .json(
+    return res.status(200).json(
       newSuccessResponse(
         "Versions Retrieved",
         "Proposal versions retrieved successfully",
-        { versions }
+        {
+          versions,
+        }
       )
     );
   } catch (err) {
@@ -1123,7 +1413,7 @@ export async function getProposalVersionsController(
           "Internal Server Error",
           "An error occurred while retrieving proposal versions."
         )
-    );
+      );
   }
 }
 
@@ -1166,15 +1456,16 @@ export async function cleanupOldProposalHistory(req: Request, res: Response) {
       if (snap.size < 500) break;
     }
 
-    return res
-      .status(200)
-      .json(
-        newSuccessResponse(
-          "Cleanup Completed",
-          "Deleted proposal history older than 30 days",
-          { deleted, cutoff: cutoff.toISOString() }
-        )
-      );
+    return res.status(200).json(
+      newSuccessResponse(
+        "Cleanup Completed",
+        "Deleted proposal history older than 30 days",
+        {
+          deleted,
+          cutoff: cutoff.toISOString(),
+        }
+      )
+    );
   } catch (err) {
     console.error("[cleanupOldProposalHistory] Error:", err);
     return res

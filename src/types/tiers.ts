@@ -1,5 +1,5 @@
-export type RecurringInterval = "daily" | "weekly" | "monthly";
-export type PlanRecurringInterval = "monthly";
+export type RecurringInterval = "daily" | "weekly" | "monthly" | "yearly";
+export type PlanRecurringInterval = "monthly" | "yearly";
 export type FeatureSlug =
   | "upwork_profile_optimizer"
   | "linkedin_profile_optimizer"
@@ -8,7 +8,9 @@ export type FeatureSlug =
   | "advanced_ai_insights"
   | "comunity_access"
   | "newsletters"
-  | "freelancer_growth_tools";
+  | "freelancer_growth_tools"
+  | "optimization_history"
+  | "proposal_history";
 
 export interface Feature {
   name: string;

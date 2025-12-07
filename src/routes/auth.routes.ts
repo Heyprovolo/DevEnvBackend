@@ -11,6 +11,7 @@ import {
   verifySession,
   verifyEmail,
   resendVerificationOTP,
+  updateProviders,
 } from "../controllers/auth.controller.ts";
 
 const authRouter: ExpressRouter = Router();
@@ -181,7 +182,12 @@ authRouter.post("/logout", logout);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-authRouter.put("/update-username", strictRateLimiter(), authMiddleware, updateUsername);
+authRouter.put(
+  "/update-username",
+  strictRateLimiter(),
+  authMiddleware,
+  updateUsername
+);
 
 /**
  * @swagger
@@ -267,7 +273,12 @@ authRouter.put("/update-username", strictRateLimiter(), authMiddleware, updateUs
  *       429:
  *         description: Rate limit exceeded
  */
-authRouter.put("/update-profile", strictRateLimiter(), authMiddleware, updateProfile);
+authRouter.put(
+  "/update-profile",
+  strictRateLimiter(),
+  authMiddleware,
+  updateProfile
+);
 
 /**
  * @swagger
@@ -311,7 +322,12 @@ authRouter.put("/update-profile", strictRateLimiter(), authMiddleware, updatePro
  *       429:
  *         description: Rate limit exceeded
  */
-authRouter.post("/verify-email", strictRateLimiter(), authMiddleware, verifyEmail);
+authRouter.post(
+  "/verify-email",
+  strictRateLimiter(),
+  authMiddleware,
+  verifyEmail
+);
 
 /**
  * @swagger
@@ -340,6 +356,59 @@ authRouter.post("/verify-email", strictRateLimiter(), authMiddleware, verifyEmai
  *       429:
  *         description: Rate limit exceeded
  */
-authRouter.post("/resend-verification-otp", strictRateLimiter(), authMiddleware, resendVerificationOTP);
+authRouter.post(
+  "/resend-verification-otp",
+  strictRateLimiter(),
+  authMiddleware,
+  resendVerificationOTP
+);
+
+/**
+ * @swagger
+ * /api/v1/auth/update-providers:
+ *   put:
+ *     summary: Update user providers
+ *     description: Updates the list of authentication providers for the user (e.g. after linking an account)
+ *     tags:
+ *       - Auth
+ *     security:
+ *       - sessionCookie: []
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               providers:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: List of authentication providers (e.g., ["email", "google"])
+ *             required:
+ *               - providers
+ *     responses:
+ *       200:
+ *         description: Providers updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiResponse'
+ *       400:
+ *         description: Invalid input
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Server error
+ */
+authRouter.put(
+  "/update-providers",
+  strictRateLimiter(),
+  authMiddleware,
+  updateProviders
+);
 
 export default authRouter;

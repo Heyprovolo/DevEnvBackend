@@ -11,7 +11,7 @@ import { corsMiddleware } from "./middlewares/cors.middleware.ts";
 
 dotenv.config();
 
-const port = process.env.PORT || 3000;
+const port = Number(process.env.PORT);
 const swaggerSpec = swaggerJsdoc(SwaggerOptions);
 
 const app = express();

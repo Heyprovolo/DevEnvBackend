@@ -10,6 +10,7 @@ export interface NewUser {
   emailVerified: boolean;
   otp: string | null;
   otpExpires: Date | null;
+  providers: string[];
   updatedAt: Date | undefined;
   createdAt: Date | undefined;
 }

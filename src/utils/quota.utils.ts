@@ -49,6 +49,11 @@ export function resetIfNewInterval(feature: QuotaFeature, now: Date): number {
         return 0;
       }
       break;
+    case "yearly":
+      if (last.getUTCFullYear() !== now.getUTCFullYear()) {
+        return 0;
+      }
+      break;
   }
   return feature.usageCount;
 }

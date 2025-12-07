@@ -25,7 +25,7 @@ export const SwaggerSchemas = {
       polarRefId: { type: "string" },
       price: { type: "number" },
       description: { type: "string" },
-      recurringInterval: { type: "string", enum: ["monthly"] },
+      recurringInterval: { type: "string", enum: ["monthly", "yearly"] },
       features: {
         type: "array",
         items: {
@@ -36,7 +36,10 @@ export const SwaggerSchemas = {
             slug: { type: "string" },
             limited: { type: "boolean" },
             maxQuota: { type: "number" },
-            recurringInterval: { type: "string", enum: ["daily", "weekly", "monthly", ""] },
+            recurringInterval: {
+              type: "string",
+              enum: ["daily", "weekly", "monthly", "yearly", ""],
+            },
           },
           required: ["name", "description", "slug", "limited", "maxQuota", "recurringInterval"],
         },

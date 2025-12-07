@@ -15,6 +15,8 @@ import {
 import type { Tier } from "../types/tiers.ts";
 import type { QuotaHistory } from "../types/quotas.ts";
 import { sendPremiumWelcomeEmail } from "../services/mail.service.ts";
+import { sendNotificationToUser } from "../services/notification.service.ts";
+import { NotificationCategory } from "../types/notification.ts";
 
 // Default tier ID
 const DEFAULT_TIER_ID = process.env.DEFAULT_TIER_ID || "starter";
@@ -434,6 +436,22 @@ async function handleOrderUpdated(data: Record<string, any>) {
       console.error(
         `Error sending premium welcome email for user ${userID}:`,
         emailError
+      );
+    }
+
+    // Send premium welcome notification
+    try {
+      await sendNotificationToUser(
+        userID,
+        "Provolo Plus Activated!",
+        "You’ve taken a big step towards landing more clients and building the career you want.",
+        "/proposal",
+        NotificationCategory.SUBSCRIPTION
+      );
+    } catch (error) {
+      console.error(
+        `Error sending premium welcome notification for user ${userID}:`,
+        error
       );
     }
   } else {

@@ -11,6 +11,9 @@ import {
   getProposalVersionsController,
   cleanupOldProposalHistory,
   getUserQuota,
+  getOptimizerHistoryByIdController,
+  cleanupOldOptimizerHistoryController,
+  getOptimizerHistory,
 } from "../controllers/optimize.controller.ts";
 
 const aiRouter: ExpressRouter = Router();
@@ -515,7 +518,12 @@ aiRouter.get("/proposal-history", authMiddleware, emailVerificationMiddleware, g
  *       500:
  *         description: Internal Server Error - Failed to retrieve proposal
  */
-aiRouter.get("/proposal-history/:proposalId", authMiddleware, emailVerificationMiddleware, getProposalByIdController);
+aiRouter.get(
+  "/proposal-history/:proposalId",
+  authMiddleware,
+  emailVerificationMiddleware,
+  getProposalByIdController
+);
 
 /**
  * @swagger
@@ -589,7 +597,12 @@ aiRouter.post("/refine-proposal", authMiddleware, emailVerificationMiddleware, r
  *       500:
  *         description: Internal server error
  */
-aiRouter.get("/proposal-versions/:proposalId", authMiddleware, emailVerificationMiddleware, getProposalVersionsController);
+aiRouter.get(
+  "/proposal-versions/:proposalId",
+  authMiddleware,
+  emailVerificationMiddleware,
+  getProposalVersionsController
+);
 
 /**
  * @swagger
@@ -676,5 +689,113 @@ aiRouter.get("/cron/cleanup-proposal-history-30d", cleanupOldProposalHistory);
  *         description: Internal server error
  */
 aiRouter.get("/quota", authMiddleware, emailVerificationMiddleware, getUserQuota);
+
+/**
+ * @swagger
+ * /api/v1/ai/optimizer-history:
+ *   get:
+ *     summary: Get optimizer (profile) history
+ *     description: Retrieves the user's profile optimization history (Upwork / LinkedIn) with pagination and optional search and type filter.
+ *     tags:
+ *       - AI
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 50
+ *           default: 10
+ *         description: Number of records per page
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search term to filter by input or optimized overview content
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [upwork, linkedin]
+ *         description: Filter history by optimizer type
+ *     responses:
+ *       200:
+ *         description: Optimizer history retrieved successfully
+ *       400:
+ *         description: Invalid pagination parameters
+ *       401:
+ *         description: Unauthorized - User not authenticated
+ *       500:
+ *         description: Internal Server Error - Failed to retrieve optimizer history
+ */
+aiRouter.get(
+  "/optimizer-history",
+  authMiddleware,
+  emailVerificationMiddleware,
+  getOptimizerHistory
+);
+
+/**
+ * @swagger
+ * /api/v1/ai/optimizer-history/{recordId}:
+ *   get:
+ *     summary: Get specific optimizer history record
+ *     description: Retrieves a single profile optimization record by ID
+ *     tags:
+ *       - AI
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: recordId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Optimizer record ID
+ *     responses:
+ *       200:
+ *         description: Record retrieved successfully
+ *       400:
+ *         description: Missing record ID
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Record not found or access denied
+ *       500:
+ *         description: Internal Server Error - Failed to retrieve record
+ */
+aiRouter.get(
+  "/optimizer-history/:recordId",
+  authMiddleware,
+  emailVerificationMiddleware,
+  getOptimizerHistoryByIdController
+);
+
+/**
+ * @swagger
+ * /api/v1/ai/cron/cleanup-optimizer-history-30d:
+ *   get:
+ *     summary: Delete optimizer history older than 30 days
+ *     description: Deletes all optimizer_history entries older than 30 days. Intended for scheduled cron.
+ *     tags:
+ *       - AI
+ *     responses:
+ *       200:
+ *         description: Cleanup completed
+ *       401:
+ *         description: Unauthorized when CRON_SECRET is set and missing/invalid
+ *       500:
+ *         description: Internal server error
+ */
+aiRouter.get("/cron/cleanup-optimizer-history-30d", cleanupOldOptimizerHistoryController);
 
 export default aiRouter;
