@@ -1,10 +1,10 @@
-# fly.toml app configuration file generated for provolo-backend on 2025-09-30T21:31:01Z
+# fly.toml app configuration file generated for devenvbackend on 2026-02-01T14:06:14Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'provolo-backend'
-primary_region = 'cdg'
+app = 'devenvbackend'
+primary_region = 'lhr'
 
 [build]
 
@@ -13,7 +13,7 @@ primary_region = 'cdg'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
   processes = ['app']
 
 [[vm]]
