@@ -80,6 +80,22 @@ export class ResumeService {
 
     return { id: doc.id, ...data };
   }
+
+  async deleteResume(userId: string, resumeId: string) {
+    const docRef = this.resumesCollection.doc(resumeId);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      throw new Error("Resume not found");
+    }
+
+    if (doc.data()?.userId !== userId) {
+      throw new Error("Unauthorized access to this resume");
+    }
+
+    await docRef.delete();
+    return { id: resumeId };
+  }
 }
 
 export const resumeService = new ResumeService();

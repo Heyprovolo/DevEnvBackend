@@ -5,6 +5,7 @@ import {
   saveResume,
   listResumes,
   getResumeById,
+  deleteResume,
 } from "../controllers/resume.controller.ts";
 
 const resumeRouter: ExpressRouter = Router();
@@ -119,5 +120,36 @@ resumeRouter.get("/list", authMiddleware, listResumes);
  *         description: Unauthorized
  */
 resumeRouter.get("/:id", authMiddleware, getResumeById);
+
+/**
+ * @openapi
+ * /api/v1/resumes/:id:
+ *   delete:
+ *     summary: Delete a resume
+ *     description: Delete a specific resume by ID.
+ *     tags:
+ *       - Resumes
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Resume ID
+ *     responses:
+ *       200:
+ *         description: Resume deleted successfully
+ *       404:
+ *         description: Resume not found
+ *       403:
+ *         description: Forbidden
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal Server Error
+ */
+resumeRouter.delete("/:id", authMiddleware, deleteResume);
 
 export default resumeRouter;

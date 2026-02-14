@@ -164,3 +164,53 @@ export const getResumeById = async (req: Request, res: Response) => {
       .json(newErrorResponse("Internal Server Error", "Error fetching resume"));
   }
 };
+
+export const deleteResume = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const uid = req.userID;
+
+    if (!uid) {
+      return res
+        .status(401)
+        .json(newErrorResponse("Unauthorized", "User not authenticated"));
+    }
+
+    if (!id) {
+      return res
+        .status(400)
+        .json(newErrorResponse("Bad Request", "Resume ID is required"));
+    }
+
+    try {
+      await resumeService.deleteResume(uid, id);
+      return res.json(
+        newSuccessResponse("Success", "Resume deleted successfully", {
+          id,
+        }),
+      );
+    } catch (error: any) {
+      if (
+        error.message === "Resume not found" ||
+        error.message === "Unauthorized access to this resume"
+      ) {
+        return res
+          .status(error.message === "Resume not found" ? 404 : 403)
+          .json(
+            newErrorResponse(
+              error.message === "Resume not found" ? "Not Found" : "Forbidden",
+              error.message,
+            ),
+          );
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error("Delete Resume Error:", error);
+    return res
+      .status(500)
+      .json(
+        newErrorResponse("Internal Server Error", "Failed to delete resume"),
+      );
+  }
+};
