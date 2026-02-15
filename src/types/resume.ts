@@ -74,6 +74,8 @@ export interface Resume {
   title: string;
   template: string;
   content: ResumeContent;
+  latex?: string;
+  html?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -83,4 +85,6 @@ export interface SaveResumeRequest {
   title?: string;
   template?: string;
   content: ResumeContent;
+  latex?: string;
+  html?: string;
 }

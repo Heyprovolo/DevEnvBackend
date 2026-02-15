@@ -2,7 +2,7 @@ import nodeLatex from "node-latex";
 import { Readable } from "stream";
 
 const latex = nodeLatex as unknown as (
-  input: Readable,
+  input: Readable | string,
   options?: Record<string, unknown>,
 ) => NodeJS.ReadableStream;
 
@@ -53,11 +53,7 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 export async function compileToPdf(latexContent: string): Promise<Buffer> {
   sanitize(latexContent);
 
-  const input = new Readable();
-  input.push(latexContent);
-  input.push(null);
-
-  const pdfStream = latex(input, {
+  const pdfStream = latex(latexContent, {
     cmd: "pdflatex",
     passes: 2,
   });
