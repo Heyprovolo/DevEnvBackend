@@ -5,7 +5,7 @@ import { resumeService } from "../services/resume.service.ts";
 
 export const saveResume = async (req: Request, res: Response) => {
   try {
-    const { resumeId, title, content, template, latex, html } =
+    const { resumeId, title, content, template, latex, sectionOrder } =
       req.body as SaveResumeRequest;
     const uid = req.userID;
 
@@ -28,7 +28,7 @@ export const saveResume = async (req: Request, res: Response) => {
     };
 
     if (typeof latex === "string") resumeData.latex = latex;
-    if (typeof html === "string") resumeData.html = html;
+    if (Array.isArray(sectionOrder)) resumeData.sectionOrder = sectionOrder;
 
     if (resumeId) {
       try {

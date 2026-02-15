@@ -75,7 +75,7 @@ export interface Resume {
   template: string;
   content: ResumeContent;
   latex?: string;
-  html?: string;
+  sectionOrder?: string[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -86,5 +86,5 @@ export interface SaveResumeRequest {
   template?: string;
   content: ResumeContent;
   latex?: string;
-  html?: string;
+  sectionOrder?: string[];
 }
