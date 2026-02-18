@@ -17,6 +17,14 @@ ENV PORT="8080"
 ARG PNPM_VERSION=latest
 RUN npm install -g pnpm@$PNPM_VERSION
 
+# Install LaTeX
+RUN apt-get update && apt-get install -y \
+    texlive-latex-base \
+    texlive-fonts-recommended \
+    texlive-fonts-extra \
+    texlive-latex-extra \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install node modules
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
