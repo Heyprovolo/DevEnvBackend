@@ -6,7 +6,9 @@ import {
   listResumes,
   getResumeById,
   deleteResume,
+  scrapeLinkedIn,
 } from "../controllers/resume.controller.ts";
+import rateLimit from "express-rate-limit";
 
 const resumeRouter: ExpressRouter = Router();
 
@@ -151,5 +153,57 @@ resumeRouter.get("/:id", authMiddleware, getResumeById);
  *         description: Internal Server Error
  */
 resumeRouter.delete("/:id", authMiddleware, deleteResume);
+
+/**
+ * Rate limiter for scraping LinkedIn to avoid account bans.
+ * Limits to 300 requests per minute per IP.
+ */
+const scrapeLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 300,
+  message: {
+    success: false,
+    message: "Too many requests, please try again after a minute",
+    data: null,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * @openapi
+ * /api/v1/resumes/scrape-linkedin:
+ *   post:
+ *     summary: Scrape LinkedIn Profile
+ *     description: Given a LinkedIn URL, scrapes the profile data for resume generation (Name, Summary, Jobs, Education).
+ *     tags:
+ *       - Resumes
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - url
+ *             properties:
+ *               url:
+ *                 type: string
+ *                 description: The LinkedIn profile URL (e.g. https://www.linkedin.com/in/username)
+ *     responses:
+ *       200:
+ *         description: LinkedIn profile scraped successfully
+ *       400:
+ *         description: LinkedIn URL is required
+ *       401:
+ *         description: Unauthorized
+ *       429:
+ *         description: Too Many Requests
+ *       500:
+ *         description: Internal Server Error
+ */
+resumeRouter.post("/scrape-linkedin", scrapeLimiter, scrapeLinkedIn);
 
 export default resumeRouter;
