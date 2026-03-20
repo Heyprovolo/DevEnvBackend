@@ -3,7 +3,7 @@ import { Readable } from "stream";
 
 const latex = nodeLatex as unknown as (
   input: Readable | string,
-  options?: Record<string, unknown>,
+  options?: Record<string, unknown>
 ) => NodeJS.ReadableStream;
 
 const DANGEROUS_COMMANDS = [
@@ -23,22 +23,32 @@ const DANGEROUS_COMMANDS = [
 
 const MAX_CONTENT_LENGTH = 500_000; // 500KB
 
-function sanitize(content: string): void {
+// pdflatex commonly fails on emoji and zero-width joiners unless explicit
+// unicode/font packages are configured. Strip those characters defensively.
+function stripUnsupportedUnicode(content: string): string {
+  return content.replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, "");
+}
+
+function sanitize(content: string): string {
   if (!content || typeof content !== "string") {
     throw new Error("LaTeX content must be a non-empty string");
   }
 
-  if (content.length > MAX_CONTENT_LENGTH) {
+  const sanitizedContent = stripUnsupportedUnicode(content);
+
+  if (sanitizedContent.length > MAX_CONTENT_LENGTH) {
     throw new Error(
-      `LaTeX content exceeds maximum length of ${MAX_CONTENT_LENGTH} characters`,
+      `LaTeX content exceeds maximum length of ${MAX_CONTENT_LENGTH} characters`
     );
   }
 
   for (const cmd of DANGEROUS_COMMANDS) {
-    if (content.includes(cmd)) {
+    if (sanitizedContent.includes(cmd)) {
       throw new Error(`Forbidden LaTeX command detected: ${cmd}`);
     }
   }
+
+  return sanitizedContent;
 }
 
 function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
@@ -51,9 +61,9 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 }
 
 export async function compileToPdf(latexContent: string): Promise<Buffer> {
-  sanitize(latexContent);
+  const sanitizedLatex = sanitize(latexContent);
 
-  const pdfStream = latex(latexContent, {
+  const pdfStream = latex(sanitizedLatex, {
     cmd: "pdflatex",
     passes: 2,
   });

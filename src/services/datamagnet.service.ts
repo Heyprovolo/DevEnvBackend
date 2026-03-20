@@ -102,13 +102,13 @@ const normalizeDate = (dateStr: string | undefined): string => {
 };
 
 export const fetchLinkedInFromDataMagnet = async (
-  url: string,
+  url: string
 ): Promise<ScrapedProfile> => {
   const apiKey = process.env.DATAMAGNET_API_KEY;
 
   if (!apiKey) {
     throw new Error(
-      "DATAMAGNET_API_KEY is not configured in the backend environment.",
+      "DATAMAGNET_API_KEY is not configured in the backend environment."
     );
   }
 
@@ -125,13 +125,13 @@ export const fetchLinkedInFromDataMagnet = async (
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-      },
+      }
     );
 
     const data = response.data.message;
     console.log(
       "[DataMagnet] Full RAW Response Message:",
-      JSON.stringify(response.data, null, 2),
+      JSON.stringify(response.data, null, 2)
     );
     console.log("[DataMagnet] Response mapping for:", data.full_name);
 
@@ -158,7 +158,9 @@ export const fetchLinkedInFromDataMagnet = async (
           endDate: normalizeDate(edu.job_ended_on),
           location: edu.job_location || "",
         }))
-        .filter((edu) => edu.institution.trim() !== "" || edu.degree.trim() !== ""),
+        .filter(
+          (edu) => edu.institution.trim() !== "" || edu.degree.trim() !== ""
+        ),
       experience: (data.experience || [])
         .map((exp) => ({
           position: exp.job_title || "",
@@ -171,7 +173,9 @@ export const fetchLinkedInFromDataMagnet = async (
           location: exp.job_location || "",
           current: !!exp.job_still_working || !exp.job_ended_on,
         }))
-        .filter((exp) => exp.position.trim() !== "" || exp.company.trim() !== ""),
+        .filter(
+          (exp) => exp.position.trim() !== "" || exp.company.trim() !== ""
+        ),
       raw: data,
     };
 
@@ -179,12 +183,12 @@ export const fetchLinkedInFromDataMagnet = async (
   } catch (error: any) {
     console.error(
       "DataMagnet API Error Detail:",
-      error.response?.data || error.message,
+      error.response?.data || error.message
     );
 
     if (error.response?.status === 401 || error.response?.status === 403) {
       throw new Error(
-        "DataMagnet API authentication failed. Please check your API key.",
+        "DataMagnet API authentication failed. Please check your API key."
       );
     }
 
@@ -193,7 +197,7 @@ export const fetchLinkedInFromDataMagnet = async (
     }
 
     throw new Error(
-      `Failed to fetch profile from DataMagnet: ${error.message}`,
+      `Failed to fetch profile from DataMagnet: ${error.message}`
     );
   }
 };
