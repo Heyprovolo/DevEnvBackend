@@ -2,6 +2,10 @@ import { Router } from "express";
 import type { Router as ExpressRouter } from "express";
 import { authMiddleware } from "../middlewares/auth.middleware.ts";
 import {
+  strictRateLimiter,
+  getTrustedClientIp,
+} from "../middlewares/rateLimiter.middleware.ts";
+import {
   saveResume,
   listResumes,
   getResumeById,
@@ -201,6 +205,7 @@ const scrapeLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => getTrustedClientIp(req) || "unknown",
 });
 
 /**
@@ -237,6 +242,12 @@ const scrapeLimiter = rateLimit({
  *       500:
  *         description: Internal Server Error
  */
-resumeRouter.post("/scrape-linkedin", scrapeLimiter, scrapeLinkedIn);
+resumeRouter.post(
+  "/scrape-linkedin",
+  strictRateLimiter(),
+  authMiddleware,
+  scrapeLimiter,
+  scrapeLinkedIn
+);
 
 export default resumeRouter;

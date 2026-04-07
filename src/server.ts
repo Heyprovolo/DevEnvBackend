@@ -12,10 +12,20 @@ import { corsMiddleware } from "./middlewares/cors.middleware.ts";
 dotenv.config();
 
 const port = Number(process.env.PORT);
+const host = process.env.HOST || "0.0.0.0";
 const swaggerSpec = swaggerJsdoc(SwaggerOptions);
 
 const app = express();
-app.use(express.json());
+// One proxy hop (Fly edge, Vercel rewrite, etc.) so req.ip and rate-limit keys match the real client.
+app.set("trust proxy", 1);
+
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      (req as Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+    },
+  }),
+);
 app.use(morgan("combined"));
 app.use(corsMiddleware());
 
@@ -26,4 +36,9 @@ app.get("/", (req: Request, res: Response) => {
   res.send("Provolo Server!");
 });
 
-app.listen(port, () => console.log(`Server is running on port ${port}`));
+const server = app.listen(port, host, () =>
+  console.log(`Server is running on ${host}:${port}`),
+);
+// Large PDF uploads + parsing can exceed default timeouts on slow connections.
+server.requestTimeout = 120_000;
+server.headersTimeout = 125_000;

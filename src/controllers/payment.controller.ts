@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import crypto from "node:crypto";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import type {
   DocumentSnapshot,
@@ -6,6 +7,8 @@ import type {
 } from "firebase-admin/firestore";
 import { getFirebaseApp } from "../utils/getFirebaseApp.ts";
 import { newErrorResponse, newSuccessResponse } from "../utils/apiResponse.ts";
+import { getUserByUserId } from "../utils/user.utils.ts";
+import { createPolar } from "../utils/polarClient.ts";
 import {
   createQuotaHistoryFromTier,
   updateQuotaHistoryForCanceledSubscription,
@@ -20,6 +23,59 @@ import { NotificationCategory } from "../types/notification.ts";
 
 // Default tier ID
 const DEFAULT_TIER_ID = process.env.DEFAULT_TIER_ID || "starter";
+
+function getSignatureFromHeader(rawSignature: string): string {
+  const trimmed = rawSignature.trim();
+  if (!trimmed) return "";
+  if (trimmed.includes("=")) {
+    const parts = trimmed.split("=");
+    return parts[parts.length - 1]?.trim() || "";
+  }
+  return trimmed;
+}
+
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  const left = Buffer.from(a, "hex");
+  const right = Buffer.from(b, "hex");
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+function isValidWebhookSignature(req: Request): boolean {
+  const webhookSecret = process.env.POLAR_WEBHOOK_SECRET || "";
+  if (!webhookSecret) {
+    return false;
+  }
+
+  const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+  if (!rawBody || rawBody.length === 0) {
+    return false;
+  }
+
+  const signatureHeader =
+    req.headers["x-polar-signature"] ||
+    req.headers["polar-signature"] ||
+    req.headers["webhook-signature"];
+  const signatureValue = Array.isArray(signatureHeader)
+    ? signatureHeader[0]
+    : signatureHeader;
+  if (!signatureValue || typeof signatureValue !== "string") {
+    return false;
+  }
+
+  const providedSignature = getSignatureFromHeader(signatureValue);
+  if (!providedSignature) {
+    return false;
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", webhookSecret)
+    .update(rawBody)
+    .digest("hex");
+
+  return timingSafeEqualHex(expectedSignature, providedSignature);
+}
 
 export async function getPaymentTiers(req: Request, res: Response) {
   try {
@@ -118,6 +174,17 @@ export async function getPaymentTierBySlug(req: Request, res: Response) {
 
 export async function paymentWebhook(req: Request, res: Response) {
   try {
+    if (!isValidWebhookSignature(req)) {
+      return res
+        .status(401)
+        .json(
+          newErrorResponse(
+            "Unauthorized",
+            "Invalid webhook signature. Request rejected.",
+          ),
+        );
+    }
+
     // Handle completely dynamic JSON data - accepts any structure
     const webhookData: Record<string, any> = req.body;
 
@@ -235,6 +302,117 @@ export async function paymentWebhook(req: Request, res: Response) {
         newErrorResponse(
           "Invalid Request",
           `Invalid payment webhook data format: ${err.message}`,
+        ),
+      );
+  }
+}
+
+export async function createCheckoutSession(req: Request, res: Response) {
+  try {
+    if (!req.userID) {
+      return res
+        .status(401)
+        .json(newErrorResponse("Unauthorized", "Authentication required."));
+    }
+
+    const { polarRefId } = req.body as { polarRefId?: unknown };
+    if (typeof polarRefId !== "string" || polarRefId.trim().length === 0) {
+      return res
+        .status(400)
+        .json(newErrorResponse("Invalid Request", "Invalid product reference."));
+    }
+
+    const userResult = await getUserByUserId(req.userID, res);
+    if (!userResult) return;
+    const { data: user } = userResult;
+
+    if (!user.email) {
+      return res
+        .status(400)
+        .json(newErrorResponse("Invalid User", "User email is required."));
+    }
+
+    const polar = createPolar();
+    const checkout = await polar.checkouts.create({
+      products: [polarRefId.trim()],
+      metadata: {
+        user_id: req.userID,
+      },
+      customerId: user.polarId || undefined,
+      customerEmail: user.email,
+      successUrl: process.env.POLAR_SUCCESS_URL,
+    });
+
+    return res.status(200).json(
+      newSuccessResponse("Checkout Created", "Checkout session created.", {
+        url: checkout.url,
+      }),
+    );
+  } catch (err) {
+    console.error("[createCheckoutSession] Error:", err);
+    return res
+      .status(500)
+      .json(
+        newErrorResponse(
+          "Checkout Failed",
+          "Unable to create checkout session at this time.",
+        ),
+      );
+  }
+}
+
+export async function createCustomerPortalSession(req: Request, res: Response) {
+  try {
+    if (!req.userID) {
+      return res
+        .status(401)
+        .json(newErrorResponse("Unauthorized", "Authentication required."));
+    }
+
+    const userResult = await getUserByUserId(req.userID, res);
+    if (!userResult) return;
+    const { data: user } = userResult;
+
+    if (!user.polarId) {
+      return res
+        .status(400)
+        .json(
+          newErrorResponse(
+            "Missing Customer",
+            "No Polar customer is linked to this account.",
+          ),
+        );
+    }
+
+    const polar = createPolar();
+    const session = await polar.customerSessions.create({
+      customerId: user.polarId,
+    });
+    const portalUrl = (session as any)?.customerPortalUrl || (session as any)?.url;
+    if (!portalUrl) {
+      return res
+        .status(500)
+        .json(
+          newErrorResponse(
+            "Portal Failed",
+            "Unable to generate customer portal URL.",
+          ),
+        );
+    }
+
+    return res.status(200).json(
+      newSuccessResponse("Portal Session Created", "Portal session created.", {
+        url: portalUrl,
+      }),
+    );
+  } catch (err) {
+    console.error("[createCustomerPortalSession] Error:", err);
+    return res
+      .status(500)
+      .json(
+        newErrorResponse(
+          "Portal Failed",
+          "Unable to create customer portal session at this time.",
         ),
       );
   }

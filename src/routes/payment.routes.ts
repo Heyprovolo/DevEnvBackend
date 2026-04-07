@@ -1,13 +1,43 @@
 import { Router } from "express";
 import type { Router as ExpressRouter } from "express";
+import type { NextFunction, Request, Response } from "express";
 import {
   getPaymentTiers,
   getPaymentTierBySlug,
   paymentWebhook,
   archiveExpiredSubscriptions,
+  createCheckoutSession,
+  createCustomerPortalSession,
 } from "../controllers/payment.controller.ts";
+import { authMiddleware } from "../middlewares/auth.middleware.ts";
+import { strictRateLimiter } from "../middlewares/rateLimiter.middleware.ts";
 
 const paymentRouter: ExpressRouter = Router();
+
+function cronSecretMiddleware(req: Request, res: Response, next: NextFunction) {
+  const expectedSecret = process.env.CRON_SECRET;
+  if (!expectedSecret) {
+    return res.status(500).json({
+      title: "Server Misconfigured",
+      message: "CRON_SECRET is not configured.",
+      status: "error",
+      data: null,
+    });
+  }
+
+  const providedSecret = req.headers["x-cron-secret"];
+  const value = Array.isArray(providedSecret) ? providedSecret[0] : providedSecret;
+  if (typeof value !== "string" || value !== expectedSecret) {
+    return res.status(401).json({
+      title: "Unauthorized",
+      message: "Invalid cron secret.",
+      status: "error",
+      data: null,
+    });
+  }
+
+  return next();
+}
 
 /**
  * @swagger
@@ -32,7 +62,7 @@ const paymentRouter: ExpressRouter = Router();
  *             example:
  *               archivedCount: 5
  */
-paymentRouter.get("/cron/archive-expired", archiveExpiredSubscriptions);
+paymentRouter.get("/cron/archive-expired", cronSecretMiddleware, archiveExpiredSubscriptions);
 
 /**
  * @swagger
@@ -175,5 +205,17 @@ paymentRouter.get("/tiers/:slug", getPaymentTierBySlug);
  *               data: null
  */
 paymentRouter.post("/webhook", paymentWebhook);
+paymentRouter.post(
+  "/checkout-session",
+  strictRateLimiter(),
+  authMiddleware,
+  createCheckoutSession
+);
+paymentRouter.post(
+  "/customer-portal-session",
+  strictRateLimiter(),
+  authMiddleware,
+  createCustomerPortalSession
+);
 
 export default paymentRouter;

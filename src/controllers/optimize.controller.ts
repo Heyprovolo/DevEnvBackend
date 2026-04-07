@@ -1258,6 +1258,35 @@ export async function refineProposal(req: Request, res: Response) {
         );
     }
 
+    // 2.5 Enforce quota for refinements as well (same feature bucket as generation)
+    let quotaResult;
+    try {
+      quotaResult = await checkUserQuota(userId, "ai_proposals");
+    } catch (err) {
+      console.error("[refineProposal] Quota check error:", err);
+      return res
+        .status(500)
+        .json(
+          newErrorResponse(
+            "Internal Server Error",
+            "An error occurred while checking quota. Please try again.",
+          ),
+        );
+    }
+
+    if (!quotaResult.allowed) {
+      const limitText =
+        quotaResult.limit === -1 ? "unlimited" : quotaResult.limit.toString();
+      return res
+        .status(429)
+        .json(
+          newErrorResponse(
+            "Quota Exceeded",
+            `Quota limit exceeded for AI proposals. Current usage: ${quotaResult.count}/${limitText}.`,
+          ),
+        );
+    }
+
     // 3. Get proposal details
     const proposal = await getProposalById(userId, proposalId);
     if (!proposal) {
@@ -1375,6 +1404,11 @@ export async function refineProposal(req: Request, res: Response) {
       refinedProposal,
       refinementOrder,
     );
+
+    // Keep quota accounting consistent with proposal generation
+    updateUserQuota(userId, "ai_proposals").catch((err) => {
+      console.warn("Warning: Failed to update quota for user", userId, err);
+    });
 
     // 8. Return success
     return res

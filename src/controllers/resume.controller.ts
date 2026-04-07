@@ -271,13 +271,11 @@ export const scrapeLinkedIn = async (req: Request, res: Response) => {
     const { url } = req.body;
     const uid = req.userID;
 
-    /* Temporarily disabled for testing
     if (!uid) {
       return res
         .status(401)
         .json(newErrorResponse("Unauthorized", "User not authenticated"));
     }
-    */
 
     if (!url) {
       return res
@@ -293,20 +291,18 @@ export const scrapeLinkedIn = async (req: Request, res: Response) => {
     }
 
     // 1. Quota Check - Can they generate a resume from LinkedIn?
-    if (uid) {
-      const quotaResult = await resumeService.validateResumeQuota(uid);
-      if (!quotaResult.allowed) {
-        const limitText =
-          quotaResult.limit === -1 ? "unlimited" : quotaResult.limit.toString();
-        return res
-          .status(429)
-          .json(
-            newErrorResponse(
-              "Quota Exceeded",
-              `You've used up your available monthly resume creation quota. Please upgrade your plan. Current usage: ${quotaResult.count}/${limitText}.`,
-            ),
-          );
-      }
+    const quotaResult = await resumeService.validateResumeQuota(uid);
+    if (!quotaResult.allowed) {
+      const limitText =
+        quotaResult.limit === -1 ? "unlimited" : quotaResult.limit.toString();
+      return res
+        .status(429)
+        .json(
+          newErrorResponse(
+            "Quota Exceeded",
+            `You've used up your available monthly resume creation quota. Please upgrade your plan. Current usage: ${quotaResult.count}/${limitText}.`,
+          ),
+        );
     }
 
     // 2. Cache Check in Firestore

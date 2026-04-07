@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Router as ExpressRouter } from "express";
 import { uploadSupportFiles, submitSupportTicket } from "../controllers/support.controller.ts";
+import { strictRateLimiter } from "../middlewares/rateLimiter.middleware.ts";
 
 const supportRouter: ExpressRouter = Router();
 
@@ -103,7 +104,12 @@ const supportRouter: ExpressRouter = Router();
  *                   example: Failed to send support email
  */
 
-supportRouter.post("/ticket", uploadSupportFiles, submitSupportTicket);
+supportRouter.post(
+  "/ticket",
+  strictRateLimiter(),
+  uploadSupportFiles,
+  submitSupportTicket
+);
 
 export default supportRouter;
 
