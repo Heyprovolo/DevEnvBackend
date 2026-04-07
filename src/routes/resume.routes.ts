@@ -95,7 +95,7 @@ resumeRouter.get("/list", authMiddleware, listResumes);
  * /api/v1/resumes/import-pdf:
  *   post:
  *     summary: Import resume data from a PDF
- *     description: Upload a text-based PDF resume and extract structured information for the resume builder.
+ *     description: Upload a text-based PDF resume (max 2MB) and extract structured information for the resume builder.
  *     tags:
  *       - Resumes
  *     security:

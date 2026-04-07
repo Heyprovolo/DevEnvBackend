@@ -8,7 +8,7 @@ import { importResumeFromPdf } from "../services/resume-import.service.ts";
 import { getFirestore } from "firebase-admin/firestore";
 import { getFirebaseApp } from "../utils/getFirebaseApp.ts";
 
-const MAX_RESUME_IMPORT_SIZE = 5 * 1024 * 1024;
+const MAX_RESUME_IMPORT_SIZE = 2 * 1024 * 1024;
 
 const resumePdfUpload = multer({
   storage: multer.memoryStorage(),
@@ -438,7 +438,7 @@ export const importResumePdf = async (req: Request, res: Response) => {
     if (error instanceof multer.MulterError) {
       const message =
         error.code === "LIMIT_FILE_SIZE"
-          ? "Resume PDF exceeds the 5MB upload limit"
+          ? "Resume PDF exceeds the 2MB upload limit"
           : error.message;
 
       return res.status(400).json(newErrorResponse("Bad Request", message));
