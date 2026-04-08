@@ -213,4 +213,283 @@ export const SwaggerSchemas = {
     },
     required: ["userId", "title", "content"],
   },
+  KnowledgeBaseCertification: {
+    type: "object",
+    properties: {
+      name: { type: "string" },
+      issuer: { type: "string" },
+      issueDate: { type: "string" },
+    },
+    required: ["name"],
+  },
+  KnowledgeBaseSections: {
+    type: "object",
+    properties: {
+      professionalSummary: { type: "string", nullable: true },
+      location: { type: "string", nullable: true },
+      experienceYears: { type: "integer", nullable: true, minimum: 0, maximum: 80 },
+      education: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            institution: { type: "string" },
+            degree: { type: "string" },
+            fieldOfStudy: { type: "string" },
+            startDate: { type: "string" },
+            endDate: { type: "string" },
+            current: { type: "boolean" },
+            description: { type: "string" },
+          },
+          required: ["institution", "degree"],
+        },
+      },
+      experience: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            company: { type: "string" },
+            position: { type: "string" },
+            startDate: { type: "string" },
+            endDate: { type: "string" },
+            current: { type: "boolean" },
+            description: { type: "string" },
+            location: { type: "string" },
+          },
+          required: ["company", "position"],
+        },
+      },
+      skills: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            level: {
+              type: "string",
+              enum: ["Beginner", "Intermediate", "Advanced", "Expert"],
+            },
+          },
+          required: ["name"],
+        },
+      },
+      projects: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            description: { type: "string" },
+            link: { type: "string" },
+            technologies: { type: "array", items: { type: "string" } },
+            startDate: { type: "string" },
+            endDate: { type: "string" },
+          },
+          required: ["title"],
+        },
+      },
+      certifications: {
+        type: "array",
+        items: { $ref: "#/components/schemas/KnowledgeBaseCertification" },
+      },
+    },
+    required: [
+      "professionalSummary",
+      "location",
+      "experienceYears",
+      "education",
+      "experience",
+      "skills",
+      "projects",
+      "certifications",
+    ],
+  },
+  KnowledgeBaseAccount: {
+    type: "object",
+    properties: {
+      displayName: { type: "string", nullable: true },
+      email: { type: "string", nullable: true },
+      professionalTitle: { type: "string", nullable: true },
+      portfolioLink: { type: "string", nullable: true },
+      tierId: { type: "string", nullable: true },
+    },
+    required: [
+      "displayName",
+      "email",
+      "professionalTitle",
+      "portfolioLink",
+      "tierId",
+    ],
+  },
+  KnowledgeBaseMeta: {
+    type: "object",
+    properties: {
+      hasResume: { type: "boolean" },
+      latestResumeId: { type: "string", nullable: true },
+      profileCompletionPercent: { type: "integer", minimum: 0, maximum: 100 },
+    },
+    required: ["hasResume", "latestResumeId", "profileCompletionPercent"],
+  },
+  SlimOptimizerEnrichment: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      optimizerType: { type: "string", enum: ["upwork", "linkedin"] },
+      createdAt: { type: "string", format: "date-time" },
+      updatedAt: { type: "string", format: "date-time" },
+      originalInputPreview: { type: "string" },
+      optimizedOverviewPreview: { type: "string" },
+    },
+    required: [
+      "id",
+      "optimizerType",
+      "createdAt",
+      "updatedAt",
+      "originalInputPreview",
+      "optimizedOverviewPreview",
+    ],
+  },
+  SlimProposalEnrichment: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      clientName: { type: "string" },
+      jobTitle: { type: "string" },
+      proposalTone: { type: "string" },
+      jobSummary: { type: "string" },
+      createdAt: { type: "string", format: "date-time" },
+      updatedAt: { type: "string", format: "date-time" },
+      textPreview: { type: "string" },
+    },
+    required: [
+      "id",
+      "clientName",
+      "jobTitle",
+      "proposalTone",
+      "jobSummary",
+      "createdAt",
+      "updatedAt",
+      "textPreview",
+    ],
+  },
+  KnowledgeBaseGetResponse: {
+    type: "object",
+    properties: {
+      account: { $ref: "#/components/schemas/KnowledgeBaseAccount" },
+      knowledge: { $ref: "#/components/schemas/KnowledgeBaseSections" },
+      enrichment: {
+        type: "object",
+        properties: {
+          recentOptimizations: {
+            type: "array",
+            items: { $ref: "#/components/schemas/SlimOptimizerEnrichment" },
+          },
+          recentProposals: {
+            type: "array",
+            items: { $ref: "#/components/schemas/SlimProposalEnrichment" },
+          },
+        },
+        required: ["recentOptimizations", "recentProposals"],
+      },
+      meta: { $ref: "#/components/schemas/KnowledgeBaseMeta" },
+    },
+    required: ["account", "knowledge", "enrichment", "meta"],
+  },
+  KnowledgeBasePatchBody: {
+    type: "object",
+    description:
+      "Partial update; any omitted key is left unchanged. Arrays are replaced when provided.",
+    properties: {
+      professionalSummary: { type: "string", nullable: true },
+      location: { type: "string", nullable: true },
+      experienceYears: { type: "integer", nullable: true, minimum: 0, maximum: 80 },
+      education: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            institution: { type: "string" },
+            degree: { type: "string" },
+            fieldOfStudy: { type: "string" },
+            startDate: { type: "string" },
+            endDate: { type: "string" },
+            current: { type: "boolean" },
+            description: { type: "string" },
+          },
+          required: ["institution", "degree"],
+        },
+      },
+      experience: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            company: { type: "string" },
+            position: { type: "string" },
+            startDate: { type: "string" },
+            endDate: { type: "string" },
+            current: { type: "boolean" },
+            description: { type: "string" },
+            location: { type: "string" },
+          },
+          required: ["company", "position"],
+        },
+      },
+      skills: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            level: {
+              type: "string",
+              enum: ["Beginner", "Intermediate", "Advanced", "Expert"],
+            },
+          },
+          required: ["name"],
+        },
+      },
+      projects: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            description: { type: "string" },
+            link: { type: "string" },
+            technologies: { type: "array", items: { type: "string" } },
+            startDate: { type: "string" },
+            endDate: { type: "string" },
+          },
+          required: ["title"],
+        },
+      },
+      certifications: {
+        type: "array",
+        items: { $ref: "#/components/schemas/KnowledgeBaseCertification" },
+      },
+    },
+  },
+  KnowledgeBaseImportBody: {
+    type: "object",
+    required: ["source"],
+    properties: {
+      source: {
+        type: "string",
+        enum: ["resume", "optimizer", "all"],
+        description:
+          "Import from saved resume content, latest optimizer run, or try resume then enrich from optimizer.",
+      },
+      resumeId: {
+        type: "string",
+        description: "Specific resume to import; defaults to most recently updated resume.",
+      },
+      overwrite: {
+        type: "boolean",
+        description:
+          "If true, replace sections from the source. If false, only fill empty fields (default).",
+      },
+    },
+  },
 };

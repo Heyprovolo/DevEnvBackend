@@ -11,6 +11,7 @@ import resumeRouter from "./resume.routes.ts";
 import latexRouter from "./latex.routes.ts";
 import analyticsRouter from "./analytics.routes.ts";
 import adminAuthRouter from "./adminAuth.routes.ts";
+import knowledgeBaseRouter from "./knowledgeBase.routes.ts";
 
 const v1Routes: ExpressRouter = Router();
 v1Routes.use("/auth", authRoutes);
@@ -23,5 +24,6 @@ v1Routes.use("/resumes", resumeRouter);
 v1Routes.use("/latex", latexRouter);
 v1Routes.use("/analytics", analyticsRouter);
 v1Routes.use("/admin-auth", adminAuthRouter);
+v1Routes.use("/knowledge-base", knowledgeBaseRouter);
 
 export default v1Routes;
