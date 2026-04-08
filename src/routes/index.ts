@@ -9,6 +9,8 @@ import supportRouter from "./support.routes.ts";
 import notificationRouter from "./notification.route.ts";
 import resumeRouter from "./resume.routes.ts";
 import latexRouter from "./latex.routes.ts";
+import analyticsRouter from "./analytics.routes.ts";
+import adminAuthRouter from "./adminAuth.routes.ts";
 
 const v1Routes: ExpressRouter = Router();
 v1Routes.use("/auth", authRoutes);
@@ -19,5 +21,7 @@ v1Routes.use("/support", supportRouter);
 v1Routes.use("/notifications", notificationRouter);
 v1Routes.use("/resumes", resumeRouter);
 v1Routes.use("/latex", latexRouter);
+v1Routes.use("/analytics", analyticsRouter);
+v1Routes.use("/admin-auth", adminAuthRouter);
 
 export default v1Routes;

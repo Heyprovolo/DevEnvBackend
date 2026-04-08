@@ -1,7 +1,11 @@
 import cors from "cors";
 import type { CorsOptions } from "cors";
 
-const devOrigins = ["http://localhost:5173", "https://provolo-dev.vercel.app"];
+const devOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "https://provolo-dev.vercel.app",
+];
 
 export const prodOrigins = [
   "https://provolo.org",

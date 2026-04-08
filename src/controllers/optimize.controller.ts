@@ -42,6 +42,11 @@ import { getFirebaseApp } from "../utils/getFirebaseApp.ts";
 import type { OptimizerType } from "../types/optimizer-history.ts";
 import { sendNotificationToUser } from "../services/notification.service.ts";
 import { NotificationCategory } from "../types/notification.ts";
+import {
+  tagObservedError,
+  timedDb,
+  timedExternal,
+} from "../middlewares/observability.middleware.ts";
 
 // Helper function to get user profile data (displayName, portfolioLink, professionalTitle) in one DB call
 async function getUserProfileData(
@@ -167,7 +172,9 @@ export async function optimizeProfile(req: Request, res: Response) {
     // 3. Check quota
     let quotaResult;
     try {
-      quotaResult = await checkUserQuota(userId, "upwork_profile_optimizer");
+      quotaResult = await timedDb(req, () =>
+        checkUserQuota(userId, "upwork_profile_optimizer"),
+      );
       console.log("Quota result for user", userId, ":", quotaResult);
     } catch (err: any) {
       console.error("[optimizeProfile] Quota check error:", err);
@@ -204,9 +211,17 @@ export async function optimizeProfile(req: Request, res: Response) {
     // 5. Call AI model (replace with your actual AI call)
     let aiResponseText = "";
     try {
-      aiResponseText = await callGemini(content, optimizerSystemInstruction());
+      aiResponseText = await timedExternal(req, () =>
+        callGemini(content, optimizerSystemInstruction()),
+      );
     } catch (err: any) {
       console.error("[optimizeProfile] AI service call failed:", err);
+      tagObservedError(req, {
+        category: "external_api_error",
+        type: err instanceof Error ? err.name : "ExternalApiError",
+        message: err instanceof Error ? err.message : "AI service call failed",
+        stack: err instanceof Error ? err.stack : undefined,
+      });
 
       // If system override detected, deduct quota and return specific error
       if (err instanceof SystemOverrideError) {
@@ -281,14 +296,18 @@ export async function optimizeProfile(req: Request, res: Response) {
 
     // 8. Store optimization history only for premium users (not starter/free)
     try {
-      const profileData = await getUserProfileData(userId, req.userDisplayName);
+      const profileData = await timedDb(req, () =>
+        getUserProfileData(userId, req.userDisplayName),
+      );
       const starterTierId = process.env.STARTER_TIER_ID || "starter";
       const userTierId = profileData?.tierId || null;
 
       if (userTierId && userTierId !== starterTierId) {
         // Check for first optimization milestone
         try {
-          const history = await getUserOptimizerHistory(userId, 1, 1);
+          const history = await timedDb(req, () =>
+            getUserOptimizerHistory(userId, 1, 1),
+          );
           if (history.total === 0) {
             await sendNotificationToUser(
               userId,
@@ -306,7 +325,8 @@ export async function optimizeProfile(req: Request, res: Response) {
         }
 
         // premium user - store optimizer history
-        storeOptimizerHistory({
+        timedDb(req, () =>
+          storeOptimizerHistory({
           userId,
           optimizerType: "upwork",
           originalInput: {
@@ -315,7 +335,8 @@ export async function optimizeProfile(req: Request, res: Response) {
             content: sanitizedProfile,
           },
           response: parsedResponse,
-        }).catch((err) => {
+          }),
+        ).catch((err) => {
           console.warn("Failed to store optimizer history (upwork)", err);
         });
       } else {
@@ -344,6 +365,12 @@ export async function optimizeProfile(req: Request, res: Response) {
   } catch (err) {
     // Top-level catch for any unexpected errors
     console.error("[optimizeProfile] Unhandled error:", err);
+    tagObservedError(req, {
+      category: "internal_failure",
+      type: err instanceof Error ? err.name : "OptimizeProfileUnhandledError",
+      message: err instanceof Error ? err.message : "Unhandled optimize profile error",
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return res
       .status(500)
       .json(
@@ -794,8 +821,8 @@ export async function generateProposal(req: Request, res: Response) {
     let profileData;
     try {
       [quotaResult, profileData] = await Promise.all([
-        checkUserQuota(userId, "ai_proposals"),
-        getUserProfileData(userId, req.userDisplayName),
+        timedDb(req, () => checkUserQuota(userId, "ai_proposals")),
+        timedDb(req, () => getUserProfileData(userId, req.userDisplayName)),
       ]);
     } catch (err: any) {
       console.error(
@@ -842,9 +869,17 @@ export async function generateProposal(req: Request, res: Response) {
     // 5. Call AI model
     let aiResponseText = "";
     try {
-      aiResponseText = await callGemini(content, proposalSystemInstruction());
+      aiResponseText = await timedExternal(req, () =>
+        callGemini(content, proposalSystemInstruction()),
+      );
     } catch (err: any) {
       console.error("[generateProposal] AI service call failed:", err);
+      tagObservedError(req, {
+        category: "external_api_error",
+        type: err instanceof Error ? err.name : "ExternalApiError",
+        message: err instanceof Error ? err.message : "AI service call failed",
+        stack: err instanceof Error ? err.stack : undefined,
+      });
 
       // If system override detected, deduct quota and return specific error
       if (err instanceof SystemOverrideError) {
@@ -997,7 +1032,7 @@ export async function generateProposal(req: Request, res: Response) {
 
     // Check for first proposal milestone
     try {
-      const history = await getUserProposalHistory(userId, 1, 1);
+      const history = await timedDb(req, () => getUserProposalHistory(userId, 1, 1));
       if (history.total === 0) {
         await sendNotificationToUser(
           userId,
@@ -1012,15 +1047,17 @@ export async function generateProposal(req: Request, res: Response) {
     }
 
     // Start both operations but don't wait for quota update
-    const storePromise = storeProposalHistory(
-      userId,
-      {
-        client_name: sanitizedClientName,
-        job_title: sanitizedJobTitle,
-        proposal_tone: proposal_tone,
-        job_summary: sanitizedJobSummary,
-      },
-      proposalResponse,
+    const storePromise = timedDb(req, () =>
+      storeProposalHistory(
+        userId,
+        {
+          client_name: sanitizedClientName,
+          job_title: sanitizedJobTitle,
+          proposal_tone: proposal_tone,
+          job_summary: sanitizedJobSummary,
+        },
+        proposalResponse,
+      ),
     ).catch((err) => {
       console.warn(
         "Warning: Failed to store proposal history for user",
@@ -1054,6 +1091,12 @@ export async function generateProposal(req: Request, res: Response) {
   } catch (err) {
     // Top-level catch for any unexpected errors
     console.error("[generateProposal] Unhandled error:", err);
+    tagObservedError(req, {
+      category: "internal_failure",
+      type: err instanceof Error ? err.name : "GenerateProposalUnhandledError",
+      message: err instanceof Error ? err.message : "Unhandled generate proposal error",
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return res
       .status(500)
       .json(

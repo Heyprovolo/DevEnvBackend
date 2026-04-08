@@ -15,7 +15,8 @@
     "seed-user-polar-ids": "ts-node ./src/cli/seed-user-polar-ids.ts",
     "seed-providers": "ts-node ./src/cli/seed-providers.ts",
     "delete-all-polar-customers": "ts-node ./src/scripts/delete-all-polar-customers.ts",
-    "migrate-resume-quotas": "ts-node ./src/scripts/migrate-resume-quotas.ts"
+    "migrate-resume-quotas": "ts-node ./src/scripts/migrate-resume-quotas.ts",
+    "create-admin-user": "ts-node ./src/scripts/create-admin-user.ts"
   },
   "keywords": [],
   "author": "",

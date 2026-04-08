@@ -7,6 +7,11 @@ import { fetchLinkedInFromDataMagnet } from "../services/datamagnet.service.ts";
 import { importResumeFromPdf } from "../services/resume-import.service.ts";
 import { getFirestore } from "firebase-admin/firestore";
 import { getFirebaseApp } from "../utils/getFirebaseApp.ts";
+import {
+  tagObservedError,
+  timedDb,
+  timedExternal,
+} from "../middlewares/observability.middleware.ts";
 
 const MAX_RESUME_IMPORT_SIZE = 2 * 1024 * 1024;
 
@@ -71,7 +76,7 @@ export const saveResume = async (req: Request, res: Response) => {
 
     if (resumeId) {
       try {
-        await resumeService.updateResume(uid, resumeId, resumeData);
+        await timedDb(req, () => resumeService.updateResume(uid, resumeId, resumeData));
         return res.json(
           newSuccessResponse("Success", "Resume updated successfully", {
             id: resumeId,
@@ -97,7 +102,9 @@ export const saveResume = async (req: Request, res: Response) => {
       }
     } else {
       try {
-        const quotaResult = await resumeService.validateResumeQuota(uid);
+        const quotaResult = await timedDb(req, () =>
+          resumeService.validateResumeQuota(uid),
+        );
         if (!quotaResult.allowed) {
           const limitText =
             quotaResult.limit === -1
@@ -121,7 +128,9 @@ export const saveResume = async (req: Request, res: Response) => {
           );
       }
 
-      const newResume = await resumeService.createResume(uid, resumeData);
+      const newResume = await timedDb(req, () =>
+        resumeService.createResume(uid, resumeData),
+      );
 
       return res.json(
         newSuccessResponse("Success", "Resume created successfully", {
@@ -131,6 +140,18 @@ export const saveResume = async (req: Request, res: Response) => {
     }
   } catch (error) {
     console.error("Save Resume Error:", error);
+    const observedError: {
+      category: "internal_failure";
+      type: string;
+      message: string;
+      stack?: string;
+    } = {
+      category: "internal_failure",
+      type: error instanceof Error ? error.name : "SaveResumeError",
+      message: error instanceof Error ? error.message : "Failed to save resume",
+    };
+    if (error instanceof Error && error.stack) observedError.stack = error.stack;
+    tagObservedError(req, observedError);
     return res
       .status(500)
       .json(newErrorResponse("Internal Server Error", "Failed to save resume"));
@@ -291,7 +312,9 @@ export const scrapeLinkedIn = async (req: Request, res: Response) => {
     }
 
     // 1. Quota Check - Can they generate a resume from LinkedIn?
-    const quotaResult = await resumeService.validateResumeQuota(uid);
+    const quotaResult = await timedDb(req, () =>
+      resumeService.validateResumeQuota(uid),
+    );
     if (!quotaResult.allowed) {
       const limitText =
         quotaResult.limit === -1 ? "unlimited" : quotaResult.limit.toString();
@@ -308,7 +331,7 @@ export const scrapeLinkedIn = async (req: Request, res: Response) => {
     // 2. Cache Check in Firestore
     const db = getFirestore(getFirebaseApp());
     const cacheRef = db.collection("linkedin_profiles").doc(username);
-    const cacheDoc = await cacheRef.get();
+    const cacheDoc = await timedDb(req, () => cacheRef.get());
 
     console.log(
       `[LinkedInController] Requesting scrape for: ${url} (Username: ${username})`,
@@ -343,17 +366,19 @@ export const scrapeLinkedIn = async (req: Request, res: Response) => {
 
     // 3. Scrape if not cached or cache is stale
     console.log(`[LinkedInController] Calling fetchLinkedInFromDataMagnet...`);
-    const data = await fetchLinkedInFromDataMagnet(url);
+    const data = await timedExternal(req, () => fetchLinkedInFromDataMagnet(url));
 
     // 4. Save to Cache
     console.log(
       `[LinkedInController] Saving scraped data to Firestore for ${username}`,
     );
-    await cacheRef.set({
-      username,
-      profileData: data,
-      updatedAt: new Date(),
-    });
+    await timedDb(req, () =>
+      cacheRef.set({
+        username,
+        profileData: data,
+        updatedAt: new Date(),
+      }),
+    );
 
     console.log(
       `[LinkedInController] Sending final profile data to frontend:`,
@@ -369,6 +394,18 @@ export const scrapeLinkedIn = async (req: Request, res: Response) => {
     );
   } catch (error: any) {
     console.error("Scrape LinkedIn Error:", error);
+    const observedError: {
+      category: "external_api_error";
+      type: string;
+      message: string;
+      stack?: string;
+    } = {
+      category: "external_api_error",
+      type: error instanceof Error ? error.name : "LinkedInScrapeError",
+      message: error instanceof Error ? error.message : "LinkedIn scrape failed",
+    };
+    if (error instanceof Error && error.stack) observedError.stack = error.stack;
+    tagObservedError(req, observedError);
 
     // Pass along specific errors from the service
     if (error.message.includes("authentication failed")) {
@@ -420,9 +457,15 @@ export const importResumePdf = async (req: Request, res: Response) => {
         .json(newErrorResponse("Bad Request", "Resume PDF is required"));
     }
 
-    const importedResume = await importResumeFromPdf(
-      req.file.buffer,
-      req.file.originalname,
+    const file = req.file;
+    if (!file) {
+      return res
+        .status(400)
+        .json(newErrorResponse("Bad Request", "Resume PDF is required"));
+    }
+
+    const importedResume = await timedExternal(req, () =>
+      importResumeFromPdf(file.buffer, file.originalname),
     );
 
     return res.json(
@@ -434,6 +477,18 @@ export const importResumePdf = async (req: Request, res: Response) => {
     );
   } catch (error) {
     console.error("Import Resume PDF Error:", error);
+    const observedError: {
+      category: "internal_failure" | "validation_error";
+      type: string;
+      message: string;
+      stack?: string;
+    } = {
+      category: error instanceof multer.MulterError ? "validation_error" : "internal_failure",
+      type: error instanceof Error ? error.name : "ImportResumePdfError",
+      message: error instanceof Error ? error.message : "Resume import failed",
+    };
+    if (error instanceof Error && error.stack) observedError.stack = error.stack;
+    tagObservedError(req, observedError);
 
     if (error instanceof multer.MulterError) {
       const message =
