@@ -15,6 +15,27 @@ import {
 
 const MAX_RESUME_IMPORT_SIZE = 2 * 1024 * 1024;
 
+function observeResumeError(
+  req: Request,
+  category: "internal_failure" | "external_api_error" | "validation_error",
+  fallbackType: string,
+  fallbackMessage: string,
+  error: unknown,
+) {
+  const observedError: {
+    category: "internal_failure" | "external_api_error" | "validation_error";
+    type: string;
+    message: string;
+    stack?: string;
+  } = {
+    category,
+    type: error instanceof Error ? error.name : fallbackType,
+    message: error instanceof Error ? error.message : fallbackMessage,
+  };
+  if (error instanceof Error && error.stack) observedError.stack = error.stack;
+  tagObservedError(req, observedError);
+}
+
 const resumePdfUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -174,6 +195,13 @@ export const listResumes = async (req: Request, res: Response) => {
     );
   } catch (error) {
     console.error("List Resumes Error:", error);
+    observeResumeError(
+      req,
+      "internal_failure",
+      "ListResumesError",
+      "Failed to fetch resumes",
+      error,
+    );
     return res
       .status(500)
       .json(
@@ -222,6 +250,13 @@ export const getResumeById = async (req: Request, res: Response) => {
     }
   } catch (error) {
     console.error("Get Resume Error:", error);
+    observeResumeError(
+      req,
+      "internal_failure",
+      "GetResumeError",
+      "Error fetching resume",
+      error,
+    );
     return res
       .status(500)
       .json(newErrorResponse("Internal Server Error", "Error fetching resume"));
@@ -270,6 +305,13 @@ export const deleteResume = async (req: Request, res: Response) => {
     }
   } catch (error) {
     console.error("Delete Resume Error:", error);
+    observeResumeError(
+      req,
+      "internal_failure",
+      "DeleteResumeError",
+      "Failed to delete resume",
+      error,
+    );
     return res
       .status(500)
       .json(
@@ -394,18 +436,13 @@ export const scrapeLinkedIn = async (req: Request, res: Response) => {
     );
   } catch (error: any) {
     console.error("Scrape LinkedIn Error:", error);
-    const observedError: {
-      category: "external_api_error";
-      type: string;
-      message: string;
-      stack?: string;
-    } = {
-      category: "external_api_error",
-      type: error instanceof Error ? error.name : "LinkedInScrapeError",
-      message: error instanceof Error ? error.message : "LinkedIn scrape failed",
-    };
-    if (error instanceof Error && error.stack) observedError.stack = error.stack;
-    tagObservedError(req, observedError);
+    observeResumeError(
+      req,
+      "external_api_error",
+      "LinkedInScrapeError",
+      "LinkedIn scrape failed",
+      error,
+    );
 
     // Pass along specific errors from the service
     if (error.message.includes("authentication failed")) {
@@ -477,18 +514,13 @@ export const importResumePdf = async (req: Request, res: Response) => {
     );
   } catch (error) {
     console.error("Import Resume PDF Error:", error);
-    const observedError: {
-      category: "internal_failure" | "validation_error";
-      type: string;
-      message: string;
-      stack?: string;
-    } = {
-      category: error instanceof multer.MulterError ? "validation_error" : "internal_failure",
-      type: error instanceof Error ? error.name : "ImportResumePdfError",
-      message: error instanceof Error ? error.message : "Resume import failed",
-    };
-    if (error instanceof Error && error.stack) observedError.stack = error.stack;
-    tagObservedError(req, observedError);
+    observeResumeError(
+      req,
+      error instanceof multer.MulterError ? "validation_error" : "internal_failure",
+      "ImportResumePdfError",
+      "Resume import failed",
+      error,
+    );
 
     if (error instanceof multer.MulterError) {
       const message =

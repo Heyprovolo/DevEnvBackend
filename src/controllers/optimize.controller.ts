@@ -48,6 +48,27 @@ import {
   timedExternal,
 } from "../middlewares/observability.middleware.ts";
 
+function observeControllerError(
+  req: Request,
+  category: "internal_failure" | "external_api_error",
+  fallbackType: string,
+  fallbackMessage: string,
+  error: unknown,
+) {
+  const observed: {
+    category: "internal_failure" | "external_api_error";
+    type: string;
+    message: string;
+    stack?: string;
+  } = {
+    category,
+    type: error instanceof Error ? error.name : fallbackType,
+    message: error instanceof Error ? error.message : fallbackMessage,
+  };
+  if (error instanceof Error && error.stack) observed.stack = error.stack;
+  tagObservedError(req, observed);
+}
+
 // Helper function to get user profile data (displayName, portfolioLink, professionalTitle) in one DB call
 async function getUserProfileData(
   userId: string,
@@ -216,12 +237,13 @@ export async function optimizeProfile(req: Request, res: Response) {
       );
     } catch (err: any) {
       console.error("[optimizeProfile] AI service call failed:", err);
-      tagObservedError(req, {
-        category: "external_api_error",
-        type: err instanceof Error ? err.name : "ExternalApiError",
-        message: err instanceof Error ? err.message : "AI service call failed",
-        stack: err instanceof Error ? err.stack : undefined,
-      });
+      observeControllerError(
+        req,
+        "external_api_error",
+        "ExternalApiError",
+        "AI service call failed",
+        err,
+      );
 
       // If system override detected, deduct quota and return specific error
       if (err instanceof SystemOverrideError) {
@@ -365,12 +387,13 @@ export async function optimizeProfile(req: Request, res: Response) {
   } catch (err) {
     // Top-level catch for any unexpected errors
     console.error("[optimizeProfile] Unhandled error:", err);
-    tagObservedError(req, {
-      category: "internal_failure",
-      type: err instanceof Error ? err.name : "OptimizeProfileUnhandledError",
-      message: err instanceof Error ? err.message : "Unhandled optimize profile error",
-      stack: err instanceof Error ? err.stack : undefined,
-    });
+    observeControllerError(
+      req,
+      "internal_failure",
+      "OptimizeProfileUnhandledError",
+      "Unhandled optimize profile error",
+      err,
+    );
     return res
       .status(500)
       .json(
@@ -465,6 +488,13 @@ export async function optimizeLinkedIn(req: Request, res: Response) {
       );
     } catch (err: any) {
       console.error("[optimizeLinkedIn] AI service call failed:", err);
+      observeControllerError(
+        req,
+        "external_api_error",
+        "LinkedInExternalApiError",
+        "AI service call failed",
+        err,
+      );
 
       // If system override detected, deduct quota and return specific error
       if (err instanceof SystemOverrideError) {
@@ -602,6 +632,13 @@ export async function optimizeLinkedIn(req: Request, res: Response) {
   } catch (err) {
     // Top-level catch for any unexpected errors
     console.error("[optimizeLinkedIn] Unhandled error:", err);
+    observeControllerError(
+      req,
+      "internal_failure",
+      "OptimizeLinkedInUnhandledError",
+      "Unhandled optimize LinkedIn error",
+      err,
+    );
     return res
       .status(500)
       .json(
@@ -874,12 +911,13 @@ export async function generateProposal(req: Request, res: Response) {
       );
     } catch (err: any) {
       console.error("[generateProposal] AI service call failed:", err);
-      tagObservedError(req, {
-        category: "external_api_error",
-        type: err instanceof Error ? err.name : "ExternalApiError",
-        message: err instanceof Error ? err.message : "AI service call failed",
-        stack: err instanceof Error ? err.stack : undefined,
-      });
+      observeControllerError(
+        req,
+        "external_api_error",
+        "ExternalApiError",
+        "AI service call failed",
+        err,
+      );
 
       // If system override detected, deduct quota and return specific error
       if (err instanceof SystemOverrideError) {
@@ -935,6 +973,13 @@ export async function generateProposal(req: Request, res: Response) {
 
       // Check if AI returned an error response
       if ("error" in parsedResponse && parsedResponse.error === true) {
+        observeControllerError(
+          req,
+          "external_api_error",
+          "AiModelBusinessError",
+          parsedResponse.message || "AI model returned an error response",
+          parsedResponse.message || "AI model returned an error response",
+        );
         // Handle different error types
         if (parsedResponse.code === "OUT_OF_SCOPE") {
           return res
@@ -1091,12 +1136,13 @@ export async function generateProposal(req: Request, res: Response) {
   } catch (err) {
     // Top-level catch for any unexpected errors
     console.error("[generateProposal] Unhandled error:", err);
-    tagObservedError(req, {
-      category: "internal_failure",
-      type: err instanceof Error ? err.name : "GenerateProposalUnhandledError",
-      message: err instanceof Error ? err.message : "Unhandled generate proposal error",
-      stack: err instanceof Error ? err.stack : undefined,
-    });
+    observeControllerError(
+      req,
+      "internal_failure",
+      "GenerateProposalUnhandledError",
+      "Unhandled generate proposal error",
+      err,
+    );
     return res
       .status(500)
       .json(
@@ -1367,6 +1413,13 @@ export async function refineProposal(req: Request, res: Response) {
       );
     } catch (err: any) {
       console.error("[refineProposal] AI call failed:", err);
+      observeControllerError(
+        req,
+        "external_api_error",
+        "RefineProposalExternalApiError",
+        "AI service call failed",
+        err,
+      );
 
       // If system override detected, deduct quota and return specific error
       if (err instanceof SystemOverrideError) {
@@ -1465,6 +1518,13 @@ export async function refineProposal(req: Request, res: Response) {
       );
   } catch (err) {
     console.error("[refineProposal] Error:", err);
+    observeControllerError(
+      req,
+      "internal_failure",
+      "RefineProposalUnhandledError",
+      "Unhandled refine proposal error",
+      err,
+    );
     return res
       .status(500)
       .json(

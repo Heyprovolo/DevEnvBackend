@@ -6,7 +6,7 @@ import type {
   RequestObservabilityEvent,
 } from "../types/observability.ts";
 import { logJson } from "../utils/structuredLogger.ts";
-import { persistObservabilityEvent } from "../services/observability.service.ts";
+import { sendSlackCriticalAlert } from "../utils/slackAlerts.ts";
 
 const REDACT_KEYS = new Set([
   "password",
@@ -180,13 +180,51 @@ export function observeRequest(req: Request, res: Response, next: NextFunction) 
       errorCategory: errorPayload?.category,
     });
 
-    void persistObservabilityEvent(event).catch((persistError) => {
-      logJson("error", {
-        event: "observability_persist_failed",
+    const shouldSendSlackAlert =
+      statusCode >= 500 || errorPayload?.category === "external_api_error";
+
+    if (shouldSendSlackAlert) {
+      const alertPayload: {
+        title: string;
+        requestId: string;
+        endpoint: string;
+        route: string;
+        method: string;
+        statusCode: number;
+        feature: string;
+        durationMs: number;
+        dbLatencyMs: number;
+        externalLatencyMs: number;
+        errorCategory?: string;
+        errorType?: string;
+        errorMessage?: string;
+        errorStack?: string;
+        payloadPreview?: unknown;
+      } = {
+        title: statusCode >= 500
+          ? process.env.NODE_ENV === "production"
+            ? "PRODUCTION Critical Error (5xx)"
+            : "DevEnvBackend Critical Error (5xx)"
+          : process.env.NODE_ENV === "production"
+            ? "PRODUCTION AI/External Error"
+            : "DevEnvBackend AI/External Error",
         requestId,
-        message: persistError instanceof Error ? persistError.message : "Unknown persist error",
-      });
-    });
+        endpoint,
+        route: routePath,
+        method: req.method,
+        statusCode,
+        feature,
+        durationMs: event.durationMs,
+        dbLatencyMs: event.dbLatencyMs,
+        externalLatencyMs: event.externalLatencyMs,
+      };
+      if (errorPayload?.category) alertPayload.errorCategory = errorPayload.category;
+      if (errorPayload?.type) alertPayload.errorType = errorPayload.type;
+      if (errorPayload?.message) alertPayload.errorMessage = errorPayload.message;
+      if (errorPayload?.stack) alertPayload.errorStack = errorPayload.stack;
+      if (event.requestPayload) alertPayload.payloadPreview = event.requestPayload;
+      void sendSlackCriticalAlert(alertPayload);
+    }
   });
 
   next();

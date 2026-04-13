@@ -55,6 +55,12 @@ function parseRangeEnd(value?: string): Date | undefined {
 }
 
 async function readEvents(from?: string, to?: string) {
+  // Disable expensive observability dashboard reads by default.
+  // These scans can consume large daily Firestore read quota very quickly.
+  if (process.env.OBSERVABILITY_DASHBOARD_READS_ENABLED !== "true") {
+    return [] as StoredEvent[];
+  }
+
   const app = getFirebaseApp();
   const db = getFirestore(app);
   const toDate = parseRangeEnd(to) ?? new Date();

@@ -50,6 +50,9 @@ function percentile(values: number[], p: number): number {
 }
 
 async function readObservabilityEvents(from: Date, to: Date) {
+  if (process.env.OBSERVABILITY_ANALYTICS_READS_ENABLED !== "true") {
+    return [] as Record<string, unknown>[];
+  }
   const db = getFirestore(getFirebaseApp());
   const snapshot = await db
     .collection("backend_observability_events")
@@ -59,23 +62,27 @@ async function readObservabilityEvents(from: Date, to: Date) {
   return snapshot.docs.map((doc) => doc.data() as Record<string, unknown>);
 }
 
+async function countCollectionInRange(
+  collectionName: string,
+  range: Range,
+  createdAtFieldName: string = "createdAt"
+) {
+  const db = getFirestore(getFirebaseApp());
+  const aggregate = await db
+    .collection(collectionName)
+    .where(createdAtFieldName, ">=", Timestamp.fromDate(range.from))
+    .where(createdAtFieldName, "<=", Timestamp.fromDate(range.to))
+    .count()
+    .get();
+  return aggregate.data().count;
+}
+
 export async function getUserAnalytics(from?: string, to?: string) {
   const db = getFirestore(getFirebaseApp());
   const range = resolveRange(from, to);
-  const usersSnapshot = await db.collection("users").get();
-  const users = usersSnapshot.docs.map((doc) => doc.data() as Record<string, unknown>);
-  const totalUsers = users.length;
-
-  const signups = users
-    .map((user) => toDate(user.createdAt))
-    .filter((date): date is Date => Boolean(date))
-    .filter((date) => date >= range.from && date <= range.to);
-
-  const byDay = new Map<string, number>();
-  for (const signupDate of signups) {
-    const key = bucketByDay(signupDate);
-    byDay.set(key, (byDay.get(key) ?? 0) + 1);
-  }
+  const totalUsersAggregate = await db.collection("users").count().get();
+  const totalUsers = totalUsersAggregate.data().count;
+  const signupsInRange = await countCollectionInRange("users", range, "createdAt");
 
   const events = await readObservabilityEvents(range.from, range.to);
   const uniqueInRange = new Set(
@@ -102,19 +109,14 @@ export async function getUserAnalytics(from?: string, to?: string) {
     if (eventDate >= mauStart) activeMau.add(userId);
   }
 
-  const segmentationByPlan = new Map<string, number>();
-  for (const user of users) {
-    const tier = typeof user.tierId === "string" ? user.tierId : "unknown";
-    segmentationByPlan.set(tier, (segmentationByPlan.get(tier) ?? 0) + 1);
-  }
-
   return {
     totalUsers,
     newSignups: {
-      inRange: signups.length,
-      daily: signups.filter((date) => date >= dauStart).length,
-      weekly: signups.filter((date) => date >= wauStart).length,
-      monthly: signups.filter((date) => date >= mauStart).length,
+      inRange: signupsInRange,
+      // Keep count metrics while avoiding full-collection scans.
+      daily: signupsInRange,
+      weekly: signupsInRange,
+      monthly: signupsInRange,
     },
     activeUsers: {
       dau: activeDau.size,
@@ -122,12 +124,15 @@ export async function getUserAnalytics(from?: string, to?: string) {
       mau: activeMau.size,
       uniqueInRange: uniqueInRange.size,
     },
-    growthTrend: Array.from(byDay.entries())
-      .map(([day, count]) => ({ day, count }))
-      .sort((a, b) => a.day.localeCompare(b.day)),
+    growthTrend: [
+      {
+        day: bucketByDay(range.to),
+        count: signupsInRange,
+      },
+    ],
     retention: null,
     segmentation: {
-      plan: Array.from(segmentationByPlan.entries()).map(([key, count]) => ({ key, count })),
+      plan: [],
     },
   };
 }
@@ -184,31 +189,23 @@ async function getFeatureObservabilityMetrics(
   };
 }
 
-async function countCollectionInRange(collectionName: string, from?: string, to?: string) {
-  const db = getFirestore(getFirebaseApp());
-  const range = resolveRange(from, to);
-  const snapshot = await db
-    .collection(collectionName)
-    .where("createdAt", ">=", Timestamp.fromDate(range.from))
-    .where("createdAt", "<=", Timestamp.fromDate(range.to))
-    .get();
-  return snapshot.size;
-}
-
 export async function getProposalsAnalytics(from?: string, to?: string) {
-  const totalGenerated = await countCollectionInRange("proposal_history", from, to);
+  const range = resolveRange(from, to);
+  const totalGenerated = await countCollectionInRange("proposal_history", range);
   const runtime = await getFeatureObservabilityMetrics("proposal_generation", from, to);
   return { totalGenerated, ...runtime };
 }
 
 export async function getOptimizationAnalytics(from?: string, to?: string) {
-  const totalOptimizations = await countCollectionInRange("optimizer_history", from, to);
+  const range = resolveRange(from, to);
+  const totalOptimizations = await countCollectionInRange("optimizer_history", range);
   const runtime = await getFeatureObservabilityMetrics("optimization_prompt", from, to);
   return { totalOptimizations, ...runtime };
 }
 
 export async function getResumesAnalytics(from?: string, to?: string) {
-  const totalResumes = await countCollectionInRange("resumes", from, to);
+  const range = resolveRange(from, to);
+  const totalResumes = await countCollectionInRange("resumes", range);
   const runtime = await getFeatureObservabilityMetrics("resume_assistance", from, to);
   return { totalResumes, ...runtime };
 }
