@@ -136,3 +136,44 @@ export async function importKnowledgeBase(req: Request, res: Response) {
       );
   }
 }
+
+export async function manualUpdateKnowledgeBase(req: Request, res: Response) {
+  try {
+    const userId = req.userID;
+    if (!userId) {
+      return res
+        .status(401)
+        .json(newErrorResponse("Unauthorized", "User not authenticated"));
+    }
+
+    const body = req.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") {
+      return res
+        .status(400)
+        .json(newErrorResponse("Bad Request", "JSON body required"));
+    }
+
+    const result = await timedDb(req, () => knowledgeBaseService.patch(userId, body));
+    if ("error" in result && typeof result.error === "string") {
+      return res
+        .status(400)
+        .json(newErrorResponse("Validation Error", result.error));
+    }
+
+    return res.json(
+      newSuccessResponse("Success", "Knowledge base manually updated", {
+        knowledge: result,
+      }),
+    );
+  } catch (err) {
+    console.error("[manualUpdateKnowledgeBase]", err);
+    return res
+      .status(500)
+      .json(
+        newErrorResponse(
+          "Internal Server Error",
+          "Failed to manually update knowledge base",
+        ),
+      );
+  }
+}

@@ -8,6 +8,7 @@ import {
   getKnowledgeBase,
   patchKnowledgeBase,
   importKnowledgeBase,
+  manualUpdateKnowledgeBase,
 } from "../controllers/knowledgeBase.controller.ts";
 
 const knowledgeBaseRouter: ExpressRouter = Router();
@@ -163,6 +164,61 @@ knowledgeBaseRouter.post(
   authMiddleware,
   emailVerificationMiddleware,
   importKnowledgeBase,
+);
+
+/**
+ * @swagger
+ * /api/v1/knowledge-base/manual-update:
+ *   post:
+ *     summary: Manually update knowledge base sections
+ *     description: >
+ *       Explicit manual update endpoint for knowledge base fields.
+ *       Accepts partial section data and applies only provided keys.
+ *       Uses the same validation limits as PATCH knowledge-base.
+ *     tags:
+ *       - Knowledge Base
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/KnowledgeBasePatchBody'
+ *     responses:
+ *       200:
+ *         description: Knowledge base manually updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 title:
+ *                   type: string
+ *                   example: Success
+ *                 message:
+ *                   type: string
+ *                   example: Knowledge base manually updated
+ *                 status:
+ *                   type: string
+ *                   enum: [success, error]
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     knowledge:
+ *                       $ref: '#/components/schemas/KnowledgeBaseSections'
+ *       400:
+ *         description: Validation error
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
+knowledgeBaseRouter.post(
+  "/manual-update",
+  authMiddleware,
+  emailVerificationMiddleware,
+  manualUpdateKnowledgeBase,
 );
 
 export default knowledgeBaseRouter;
