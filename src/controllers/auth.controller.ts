@@ -1211,12 +1211,10 @@ export async function getDeviceHistory(req: Request, res: Response) {
         .json(newErrorResponse("Unauthorized", "You must be logged in."));
     }
 
-    const app = getFirebaseApp();
-    const db = getFirestore(app);
+    const userResult = await getUserByUserId(req.userID, res);
+    if (!userResult) return;
 
-    const snapshot = await db
-      .collection("users")
-      .doc(req.userID)
+    const snapshot = await userResult.doc.ref
       .collection("login_history")
       .orderBy("timestamp", "desc")
       .limit(10)
@@ -1286,12 +1284,10 @@ export async function deleteDeviceHistory(req: Request, res: Response) {
         .json(newErrorResponse("Invalid Request", "ID is required"));
     }
 
-    const app = getFirebaseApp();
-    const db = getFirestore(app);
+    const userResult = await getUserByUserId(req.userID, res);
+    if (!userResult) return;
 
-    await db
-      .collection("users")
-      .doc(req.userID)
+    await userResult.doc.ref
       .collection("login_history")
       .doc(id)
       .delete();

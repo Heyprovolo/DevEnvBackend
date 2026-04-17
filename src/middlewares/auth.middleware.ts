@@ -27,29 +27,37 @@ export async function authMiddleware(
   const app = getFirebaseApp();
   const auth = getAuth(app);
 
-  let token: DecodedIdToken;
-  try {
-    // Try session cookie first
-    const sessionCookie = getCookie(req, "session");
-    if (sessionCookie) {
+  let token: DecodedIdToken | null = null;
+  const sessionCookie = getCookie(req, "session");
+  const authHeader = req.headers.authorization;
+
+  if (sessionCookie) {
+    try {
       token = await auth.verifySessionCookie(sessionCookie, true);
-    } else {
-      // Fallback to Bearer token
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        const idToken = authHeader.replace("Bearer ", "");
-        token = await auth.verifyIdToken(idToken);
-      } else {
-        return res
-          .status(401)
-          .json(newErrorResponse("Unauthorized", "No authentication provided"));
-      }
+    } catch (sessionErr) {
+      token = null;
     }
-  } catch (err) {
+  }
+
+  if (!token && authHeader && authHeader.startsWith("Bearer ")) {
+    try {
+      const idToken = authHeader.replace("Bearer ", "");
+      token = await auth.verifyIdToken(idToken);
+    } catch (bearerErr) {
+      token = null;
+    }
+  }
+
+  if (!token) {
     return res
       .status(401)
       .json(
-        newErrorResponse("Unauthorized", "Invalid or expired token/session")
+        newErrorResponse(
+          "Unauthorized",
+          sessionCookie || authHeader
+            ? "Invalid or expired token/session"
+            : "No authentication provided"
+        )
       );
   }
 
