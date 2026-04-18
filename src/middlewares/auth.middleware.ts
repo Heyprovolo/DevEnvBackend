@@ -8,6 +8,53 @@ import { getCookie } from "../utils/getCookie.ts";
 // Types
 import type { DecodedIdToken } from "firebase-admin/auth";
 
+const VERIFIED_CACHE_TTL_MS = 10 * 60 * 1000;
+const UNVERIFIED_CACHE_TTL_MS = 30 * 1000;
+const CACHE_MAX_ENTRIES = 5000;
+
+type EmailVerificationCacheEntry = {
+  exists: boolean;
+  emailVerified: boolean;
+  expiresAt: number;
+};
+
+const emailVerificationCache = new Map<string, EmailVerificationCacheEntry>();
+
+function getEmailVerificationCache(
+  userId: string
+): EmailVerificationCacheEntry | null {
+  const entry = emailVerificationCache.get(userId);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    emailVerificationCache.delete(userId);
+    return null;
+  }
+  return entry;
+}
+
+function setEmailVerificationCache(
+  userId: string,
+  entry: Omit<EmailVerificationCacheEntry, "expiresAt">
+) {
+  if (emailVerificationCache.size > CACHE_MAX_ENTRIES) {
+    const now = Date.now();
+    for (const [key, value] of emailVerificationCache.entries()) {
+      if (value.expiresAt <= now) {
+        emailVerificationCache.delete(key);
+      }
+    }
+  }
+
+  const ttlMs = entry.emailVerified
+    ? VERIFIED_CACHE_TTL_MS
+    : UNVERIFIED_CACHE_TTL_MS;
+
+  emailVerificationCache.set(userId, {
+    ...entry,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
 // Extend Express Request interface to include custom user properties
 declare global {
   namespace Express {
@@ -81,6 +128,26 @@ export async function emailVerificationMiddleware(
   }
 
   try {
+    const cachedStatus = getEmailVerificationCache(req.userID);
+    if (cachedStatus) {
+      if (!cachedStatus.exists) {
+        return res
+          .status(404)
+          .json(newErrorResponse("User Not Found", "User account not found"));
+      }
+      if (!cachedStatus.emailVerified) {
+        return res
+          .status(403)
+          .json(
+            newErrorResponse(
+              "Email Not Verified",
+              "Please verify your email address before using this feature. Check your inbox for the verification code."
+            )
+          );
+      }
+      return next();
+    }
+
     const app = getFirebaseApp();
     const db = getFirestore(app);
 
@@ -89,6 +156,10 @@ export async function emailVerificationMiddleware(
     const docs = await userQuery.get();
 
     if (docs.empty || !docs.docs[0]) {
+      setEmailVerificationCache(req.userID, {
+        exists: false,
+        emailVerified: false,
+      });
       return res
         .status(404)
         .json(newErrorResponse("User Not Found", "User account not found"));
@@ -96,6 +167,10 @@ export async function emailVerificationMiddleware(
 
     const userData = docs.docs[0].data();
     const emailVerified = userData.emailVerified === true;
+    setEmailVerificationCache(req.userID, {
+      exists: true,
+      emailVerified,
+    });
 
     if (!emailVerified) {
       return res

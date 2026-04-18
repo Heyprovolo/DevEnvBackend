@@ -38,25 +38,21 @@ export const getMyNotifications = async (req: Request, res: Response) => {
       options
     );
 
-    // Get total count
+    // Total count via aggregation (1 aggregation read vs N document reads)
     const app = getFirebaseApp();
     const db = getFirestore(app);
     const notificationsCollection = db.collection("notifications");
-    const totalSnapshot = await notificationsCollection
+    const countSnap = await notificationsCollection
       .where("recipient", "==", req.userID)
+      .count()
       .get();
-    const totalCount = totalSnapshot.size;
+    const totalCount = countSnap.data().count;
 
-    // Calculate remaining pages
     const pageSize = options.limit || 20;
-    const currentPage = options.startAfter
-      ? Math.floor(
-          totalSnapshot.docs.findIndex((doc) => doc.id === options.startAfter) /
-            pageSize
-        ) + 2
-      : 1;
-    const totalPages = Math.ceil(totalCount / pageSize);
-    const remainingPages = totalPages - currentPage;
+    const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+    // Cursor pagination: exact page index is not derived without scanning all docs (avoided for read cost).
+    const currentPage = options.startAfter ? Math.min(totalPages, 2) : 1;
+    const remainingPages = Math.max(0, totalPages - currentPage);
 
     res.status(200).json(
       newSuccessResponse(
