@@ -418,12 +418,30 @@ authRouter.put(
  * /api/v1/auth/devices:
  *   get:
  *     summary: Get device login history
- *     description: Retrieves the last 10 login events for the user
+ *     description: >-
+ *       Paginated login events (newest first). `limit` defaults to 10 and is capped at 10.
+ *       Pass `cursor` (a previous page’s `nextCursor` / last row id) for the next page.
  *     tags:
  *       - Auth
  *     security:
  *       - sessionCookie: []
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 10
+ *           default: 10
+ *         description: Page size (max 10)
+ *       - in: query
+ *         name: cursor
+ *         schema:
+ *           type: string
+ *         description: >
+ *           Opaque pagination token returned as `nextCursor` (recommended; avoids an extra anchor read).
+ *           Legacy bare login_history document id still works but triggers one additional Firestore read.
  *     responses:
  *       200:
  *         description: History retrieved successfully

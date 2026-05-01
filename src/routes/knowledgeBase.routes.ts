@@ -19,7 +19,8 @@ const knowledgeBaseRouter: ExpressRouter = Router();
  *   get:
  *     summary: Get unified knowledge base for the authenticated user
  *     description: >
- *       Returns account fields from the user profile, editable knowledge sections from Firestore,
+ *       Returns account fields from the user profile (including `country` and `state` from last sign-in geo headers when available),
+ *       editable knowledge sections from Firestore,
  *       and read-only enrichment from recent profile optimizations and proposals (truncated for size).
  *       Profile completion is computed from 10 binary checks (10 points each): display name,
  *       professional title, summary, experience, skills, education, certifications, projects,

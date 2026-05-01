@@ -44,6 +44,10 @@ export interface KnowledgeBaseAccount {
   professionalTitle: string | null;
   portfolioLink: string | null;
   tierId: string | null;
+  /** Inferred from CDN / request when user last signed in; null if unknown. */
+  country: string | null;
+  /** Subdivision when available; null if unknown. */
+  state: string | null;
 }
 
 export interface SlimOptimizerEnrichment {

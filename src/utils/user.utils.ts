@@ -80,6 +80,9 @@ export async function getUserByUserId(
       );
     }
 
+    if (data.country === undefined) data.country = null;
+    if (data.state === undefined) data.state = null;
+
     return { doc, data };
   } catch (err) {
     console.error("Error fetching user:", err);

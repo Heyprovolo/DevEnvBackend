@@ -24,6 +24,14 @@ import {
   getUserByUserId,
   mapFirebaseProvider,
 } from "../utils/user.utils.ts";
+import { extractRequestLocation } from "../utils/requestLocation.utils.ts";
+import {
+  decodeLoginHistoryCursor,
+  encodeLoginHistoryCursor,
+  loginHistoryBaseQuery,
+  startLoginHistoryAfterCompound,
+  timestampMillisFromFirestoreField,
+} from "../utils/loginHistoryPagination.utils.ts";
 import { validateUsername } from "../utils/validation.utils.ts";
 
 // Generates and stores a new OTP code for email verification, then sends it via email (expires after 15 minutes)
@@ -75,6 +83,8 @@ async function recordLoginHistory(
       req.ip ||
       "Unknown";
 
+    const { country, state } = extractRequestLocation(req);
+
     const usersRef = db.collection("users");
     const userQuery = usersRef.where("userId", "==", userId).limit(1);
     const docs = await userQuery.get();
@@ -85,6 +95,8 @@ async function recordLoginHistory(
         browser: browserName,
         os: osName,
         ip,
+        country,
+        state,
         userAgent,
         timestamp: new Date(),
       });
@@ -182,6 +194,7 @@ export async function login(req: Request, res: Response) {
     const currentProvider = mapFirebaseProvider(firebaseProvider);
 
     const providers = data.providers || [];
+    const loc = extractRequestLocation(req);
 
     // Update providers and activeSessionToken
     const updateData: Record<string, unknown> = {
@@ -192,6 +205,8 @@ export async function login(req: Request, res: Response) {
       updateData.providers = [...providers, currentProvider];
       providers.push(currentProvider);
     }
+    if (loc.country != null) updateData.country = loc.country;
+    if (loc.state != null) updateData.state = loc.state;
     await doc.ref.update(updateData);
 
     const emailVerified = data.emailVerified === true;
@@ -200,6 +215,8 @@ export async function login(req: Request, res: Response) {
       id: doc.id,
       providers, // Ensure updated providers are returned
       activeSessionToken,
+      ...(loc.country != null && { country: loc.country }),
+      ...(loc.state != null && { state: loc.state }),
     };
 
     return res
@@ -278,6 +295,7 @@ export async function signupOrEnsureUser(req: Request, res: Response) {
     // Check if user exists
     const userResult = await getUserByUserId(userID);
     const now: Date = new Date();
+    const loc = extractRequestLocation(req);
 
     // Determine provider
     const firebaseProvider = decodedUserInfo.firebase.sign_in_provider;
@@ -318,6 +336,8 @@ export async function signupOrEnsureUser(req: Request, res: Response) {
         userId: userID,
         email: userRecord.email!,
         displayName: userRecord.displayName || null,
+        country: loc.country,
+        state: loc.state,
         tierId: starterTierId,
         mailerliteId: null,
         polarId: null,
@@ -408,12 +428,16 @@ export async function signupOrEnsureUser(req: Request, res: Response) {
       await userDocRef.update({
         activeSessionToken,
         updatedAt: new Date(),
+        ...(loc.country != null && { country: loc.country }),
+        ...(loc.state != null && { state: loc.state }),
       });
 
       // Update userData with the token
       if (userData) {
         userData.activeSessionToken = activeSessionToken;
         userData.updatedAt = new Date();
+        if (loc.country != null) userData.country = loc.country;
+        if (loc.state != null) userData.state = loc.state;
       }
     } catch (err) {
       console.error("Signup/Session Error:", err);
@@ -1214,25 +1238,71 @@ export async function getDeviceHistory(req: Request, res: Response) {
     const userResult = await getUserByUserId(req.userID, res);
     if (!userResult) return;
 
-    const snapshot = await userResult.doc.ref
-      .collection("login_history")
-      .orderBy("timestamp", "desc")
-      .limit(10)
-      .get();
+    const loginCol = userResult.doc.ref.collection("login_history");
 
-    const history = snapshot.docs.map((doc) => {
+    let limitNum = Number.parseInt(String(req.query.limit ?? "10"), 10);
+    if (!Number.isFinite(limitNum)) limitNum = 10;
+    limitNum = Math.min(10, Math.max(1, Math.floor(limitNum)));
+
+    let q: FirebaseFirestore.Query = loginHistoryBaseQuery(loginCol);
+
+    const cursorRaw = req.query.cursor;
+    const cursorStr =
+      typeof cursorRaw === "string" && cursorRaw.trim()
+        ? cursorRaw.trim()
+        : null;
+
+    if (cursorStr) {
+      const opaque = decodeLoginHistoryCursor(cursorStr);
+      if (opaque) {
+        q = startLoginHistoryAfterCompound(q, opaque.millis, opaque.docId);
+      } else {
+        /** Legacy anchor = document id alone (costs one read; prefer opaque cursor). */
+        const cursorSnap = await loginCol.doc(cursorStr).get();
+        if (!cursorSnap.exists) {
+          return res
+            .status(400)
+            .json(
+              newErrorResponse(
+                "Invalid Request",
+                "Invalid or expired pagination cursor.",
+              ),
+            );
+        }
+        const millis = timestampMillisFromFirestoreField(
+          cursorSnap.get("timestamp"),
+        );
+        if (millis === null) {
+          return res
+            .status(400)
+            .json(
+              newErrorResponse(
+                "Invalid Request",
+                "Invalid pagination cursor timestamp.",
+              ),
+            );
+        }
+        q = startLoginHistoryAfterCompound(q, millis, cursorSnap.id);
+      }
+    }
+
+    const peek = limitNum + 1;
+    const snapshot = await q.limit(peek).get();
+    const hasMore = snapshot.docs.length > limitNum;
+    const pageDocs = hasMore
+      ? snapshot.docs.slice(0, limitNum)
+      : snapshot.docs;
+
+    const history = pageDocs.map((doc) => {
       const data = doc.data();
       let timestamp: string;
 
-      // Handle Firestore Timestamp, Date, or missing timestamp
       if (data.timestamp) {
         if (data.timestamp.toDate) {
-          // Firestore Timestamp object
           timestamp = data.timestamp.toDate().toISOString();
         } else if (data.timestamp instanceof Date) {
           timestamp = data.timestamp.toISOString();
         } else if (data.timestamp.seconds) {
-          // Firestore Timestamp-like object
           timestamp = new Date(data.timestamp.seconds * 1000).toISOString();
         } else {
           timestamp = new Date(data.timestamp).toISOString();
@@ -1247,15 +1317,37 @@ export async function getDeviceHistory(req: Request, res: Response) {
         browser: data.browser || "Unknown",
         os: data.os || "Unknown",
         ip: data.ip || "Unknown",
+        country:
+          typeof data.country === "string" && data.country.trim()
+            ? data.country.trim()
+            : null,
+        state:
+          typeof data.state === "string" && data.state.trim()
+            ? data.state.trim()
+            : null,
         timestamp,
       };
     });
 
-    return res
-      .status(200)
-      .json(
-        newSuccessResponse("Device History", "Retrieved successfully", history)
-      );
+    const lastSnap =
+      hasMore && pageDocs.length > 0
+        ? pageDocs[pageDocs.length - 1]
+        : null;
+    const lastMillis = lastSnap
+      ? timestampMillisFromFirestoreField(lastSnap.get("timestamp"))
+      : null;
+    const nextCursor =
+      hasMore && lastSnap && lastMillis !== null
+        ? encodeLoginHistoryCursor(lastMillis, lastSnap.id)
+        : null;
+
+    return res.status(200).json(
+      newSuccessResponse("Device History", "Retrieved successfully", {
+        sessions: history,
+        nextCursor,
+        limit: limitNum,
+      }),
+    );
   } catch (err) {
     console.error("Get Device History Error:", err);
     return res

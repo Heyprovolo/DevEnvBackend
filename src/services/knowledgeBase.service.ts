@@ -146,6 +146,8 @@ async function fetchUserAccount(
       professionalTitle: null,
       portfolioLink: null,
       tierId: null,
+      country: null,
+      state: null,
     };
   }
 
@@ -164,6 +166,8 @@ async function fetchUserAccount(
     portfolioLink:
       typeof u.portfolioLink === "string" ? u.portfolioLink : null,
     tierId: typeof u.tierId === "string" ? u.tierId : null,
+    country: typeof u.country === "string" ? u.country : null,
+    state: typeof u.state === "string" ? u.state : null,
   };
 }
 

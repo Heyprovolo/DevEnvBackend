@@ -313,6 +313,18 @@ export const SwaggerSchemas = {
       professionalTitle: { type: "string", nullable: true },
       portfolioLink: { type: "string", nullable: true },
       tierId: { type: "string", nullable: true },
+      country: {
+        type: "string",
+        nullable: true,
+        description:
+          "Last inferred country from sign-in request (CDN/geo headers); null when unknown.",
+      },
+      state: {
+        type: "string",
+        nullable: true,
+        description:
+          "Region/subdivision when provided by the edge; null when unknown.",
+      },
     },
     required: [
       "displayName",
@@ -320,6 +332,8 @@ export const SwaggerSchemas = {
       "professionalTitle",
       "portfolioLink",
       "tierId",
+      "country",
+      "state",
     ],
   },
   KnowledgeBaseMeta: {
