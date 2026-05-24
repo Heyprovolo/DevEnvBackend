@@ -1,8 +1,21 @@
+export type RoleFitLevel = "strong" | "moderate" | "weak";
+
+export interface RoleFitAssessment {
+  fitLevel: RoleFitLevel;
+  fitScore: number;
+  summary: string;
+  strengths: string[];
+  gaps: string[];
+  recommendation: string;
+}
+
 export interface ProposalReq {
   client_name: string;
   job_title: string;
   proposal_tone: "professional" | "conversational" | "confident" | "calm";
   job_summary: string;
+  /** Optional Profile Optimizer root record ID for role-fit analysis */
+  optimizer_record_id?: string;
 }
 
 export interface ProposalResponse {
@@ -17,6 +30,8 @@ export interface ProposalResponse {
   proposalId?: string; // Added for generation response
   version?: number; // Version number for tracking revisions
   versionId?: string; // Unique ID for this specific version
+  /** Present when optimizer_record_id was provided on generate */
+  roleFit?: RoleFitAssessment;
 }
 
 export interface AIErrorResponse {
@@ -40,6 +55,7 @@ export interface ProposalHistory {
   jobTitle: string;
   proposalTone: "professional" | "conversational" | "confident" | "calm";
   jobSummary: string;
+  optimizerRecordId?: string;
   proposalResponse: ProposalResponse;
   createdAt: Date;
   updatedAt: Date;

@@ -1,10 +1,13 @@
 import type { Request, Response } from "express";
+import { validateProposalRefineInstruction } from "../utils/proposalInputGuard.ts";
+import { validateRefineInstruction } from "../utils/refineInstructionGuard.ts";
 import {
   optimizerPrompt,
   optimizerSystemInstruction,
   linkedinOptimizerPrompt,
   linkedinOptimizerSystemInstruction,
   proposalPrompt,
+  formatOptimizerProfileContext,
   proposalSystemInstruction,
   storeProposalHistory,
   getUserProposalHistory,
@@ -17,9 +20,18 @@ import {
   createProposalMDX,
   validateProposalResponse,
   storeOptimizerHistory,
+  storeOptimizerRefinement,
   getUserOptimizerHistory,
   getOptimizerHistoryById,
   cleanupOldOptimizerHistory,
+  getLatestOptimizerVersion,
+  getOptimizerVersionChain,
+  countOptimizerRefinementsForRoot,
+  resolveOptimizerRootId,
+  truncateInstructionLabel,
+  refineProfilePrompt,
+  refineProfileSystemInstruction,
+  STARTER_REFINEMENTS_PER_ROOT,
 } from "../utils/prompt.utils.ts";
 import { updateUserQuota, checkUserQuota } from "../utils/quota.utils.ts";
 import type { FeatureSlug } from "../types/tiers.ts";
@@ -37,9 +49,15 @@ import type {
   RefineProposalReq,
   RefinementAction,
 } from "../types/proposal.types.ts";
+import { REFINEMENT_LABELS } from "../types/proposal.types.ts";
 import { getFirestore } from "firebase-admin/firestore";
 import { getFirebaseApp } from "../utils/getFirebaseApp.ts";
-import type { OptimizerType } from "../types/optimizer-history.ts";
+import type {
+  OptimizerType,
+  RefineProfileReq,
+  OptimizerTargetSection,
+  OptimizerResponseSections,
+} from "../types/optimizer-history.ts";
 import { sendNotificationToUser } from "../services/notification.service.ts";
 import { NotificationCategory } from "../types/notification.ts";
 import {
@@ -151,6 +169,31 @@ interface PromptReq {
   full_name: string;
   professional_title: string;
   profile: string;
+}
+
+function isUnlimitedRefineTier(tierId: string | null): boolean {
+  const starterTierId = process.env.STARTER_TIER_ID || "starter";
+  return !!tierId && tierId !== starterTierId;
+}
+
+async function persistOptimizerRootRun(
+  userId: string,
+  optimizerType: OptimizerType,
+  sanitizedFullName: string,
+  sanitizedTitle: string,
+  sanitizedProfile: string,
+  parsedResponse: OptimizerResponseSections,
+): Promise<string> {
+  return storeOptimizerHistory({
+    userId,
+    optimizerType,
+    originalInput: {
+      fullName: sanitizedFullName,
+      professionalTitle: sanitizedTitle,
+      content: sanitizedProfile,
+    },
+    response: parsedResponse,
+  });
 }
 
 export async function optimizeProfile(req: Request, res: Response) {
@@ -316,21 +359,34 @@ export async function optimizeProfile(req: Request, res: Response) {
       console.warn("Warning: Failed to update quota for user", userId, err);
     });
 
-    // 8. Store optimization history only for premium users (not starter/free)
+    // 8. Store optimization history (required for in-app refinement)
+    let optimizerRecordId: string | undefined;
+    let unlimitedRefine = false;
     try {
       const profileData = await timedDb(req, () =>
         getUserProfileData(userId, req.userDisplayName),
       );
-      const starterTierId = process.env.STARTER_TIER_ID || "starter";
       const userTierId = profileData?.tierId || null;
+      unlimitedRefine = isUnlimitedRefineTier(userTierId);
 
+      optimizerRecordId = await timedDb(req, () =>
+        persistOptimizerRootRun(
+          userId,
+          "upwork",
+          sanitizedFullName,
+          sanitizedTitle,
+          sanitizedProfile,
+          parsedResponse,
+        ),
+      );
+
+      const starterTierId = process.env.STARTER_TIER_ID || "starter";
       if (userTierId && userTierId !== starterTierId) {
-        // Check for first optimization milestone
         try {
           const history = await timedDb(req, () =>
             getUserOptimizerHistory(userId, 1, 1),
           );
-          if (history.total === 0) {
+          if (history.total <= 1) {
             await sendNotificationToUser(
               userId,
               "Milestone Unlocked: First Optimization!",
@@ -345,45 +401,26 @@ export async function optimizeProfile(req: Request, res: Response) {
             err,
           );
         }
-
-        // premium user - store optimizer history
-        timedDb(req, () =>
-          storeOptimizerHistory({
-          userId,
-          optimizerType: "upwork",
-          originalInput: {
-            fullName: sanitizedFullName,
-            professionalTitle: sanitizedTitle,
-            content: sanitizedProfile,
-          },
-          response: parsedResponse,
-          }),
-        ).catch((err) => {
-          console.warn("Failed to store optimizer history (upwork)", err);
-        });
-      } else {
-        // non-premium - skip storing history
-        console.debug(
-          `[optimizeProfile] Skipping optimizer history store for user ${userId} with tier ${userTierId}`,
-        );
       }
     } catch (err) {
-      console.warn(
-        "Failed to check user tier before storing optimizer history",
-        err,
-      );
+      console.warn("Failed to store optimizer history (upwork)", err);
     }
 
-    // 9. Return success immediately (quota + history storing continue in background)
-    return res
-      .status(200)
-      .json(
-        newSuccessResponse(
-          "Optimization Successful",
-          "Profile optimized successfully",
-          parsedResponse,
-        ),
-      );
+    // 9. Return success with record id for refinement workspace
+    return res.status(200).json(
+      newSuccessResponse(
+        "Optimization Successful",
+        "Profile optimized successfully",
+        {
+          ...parsedResponse,
+          optimizerRecordId,
+          unlimitedRefine,
+          refinementsRemaining: unlimitedRefine
+            ? -1
+            : STARTER_REFINEMENTS_PER_ROOT,
+        },
+      ),
+    );
   } catch (err) {
     // Top-level catch for any unexpected errors
     console.error("[optimizeProfile] Unhandled error:", err);
@@ -567,68 +604,41 @@ export async function optimizeLinkedIn(req: Request, res: Response) {
       console.warn("Warning: Failed to update quota for user", userId, err);
     });
 
-    // 8. Store optimization history (fire and forget)
-    // Only for premium users
+    // 8. Store optimization history (required for in-app refinement)
+    let optimizerRecordId: string | undefined;
+    let unlimitedRefine = false;
     try {
       const profileData = await getUserProfileData(userId, req.userDisplayName);
-      const starterTierId = process.env.STARTER_TIER_ID || "starter";
       const userTierId = profileData?.tierId || null;
+      unlimitedRefine = isUnlimitedRefineTier(userTierId);
 
-      if (userTierId && userTierId !== starterTierId) {
-        // Check for first optimization milestone (using getUserOptimizerHistory which is already imported)
-        try {
-          const history = await getUserOptimizerHistory(userId, 1, 1);
-          if (history.total === 0) {
-            await sendNotificationToUser(
-              userId,
-              "Milestone Unlocked: First Optimization!",
-              "You've just optimized your first profile. You're a step closer to your goal!",
-              "/optimizer",
-              NotificationCategory.ACHIEVEMENT,
-            );
-          }
-        } catch (err) {
-          console.error(
-            "Error checking/sending first optimization notification:",
-            err,
-          );
-        }
-
-        storeOptimizerHistory({
-          userId,
-          optimizerType: "linkedin",
-          originalInput: {
-            fullName: sanitizedFullName,
-            professionalTitle: sanitizedTitle,
-            content: sanitizedProfile,
-          },
-          response: parsedResponse,
-        }).catch((err) => {
-          console.warn("Failed to store optimizer history (linkedin)", err);
-        });
-      } else {
-        // non-premium - skip storing history
-        console.debug(
-          `[optimizeLinkedIn] Skipping optimizer history store for user ${userId} with tier ${userTierId}`,
-        );
-      }
-    } catch (err) {
-      console.warn(
-        "Failed to check user tier before storing optimizer history (linkedin)",
-        err,
+      optimizerRecordId = await persistOptimizerRootRun(
+        userId,
+        "linkedin",
+        sanitizedFullName,
+        sanitizedTitle,
+        sanitizedProfile,
+        parsedResponse,
       );
+    } catch (err) {
+      console.warn("Failed to store optimizer history (linkedin)", err);
     }
 
-    // 9. Return success immediately (quota update continues in background)
-    return res
-      .status(200)
-      .json(
-        newSuccessResponse(
-          "Optimization Successful",
-          "LinkedIn profile optimized successfully",
-          parsedResponse,
-        ),
-      );
+    // 9. Return success with record id for refinement workspace
+    return res.status(200).json(
+      newSuccessResponse(
+        "Optimization Successful",
+        "LinkedIn profile optimized successfully",
+        {
+          ...parsedResponse,
+          optimizerRecordId,
+          unlimitedRefine,
+          refinementsRemaining: unlimitedRefine
+            ? -1
+            : STARTER_REFINEMENTS_PER_ROOT,
+        },
+      ),
+    );
   } catch (err) {
     // Top-level catch for any unexpected errors
     console.error("[optimizeLinkedIn] Unhandled error:", err);
@@ -815,8 +825,13 @@ export async function generateProposal(req: Request, res: Response) {
     }
 
     // 2. Validate input first (fast, no DB calls)
-    const { client_name, job_title, proposal_tone, job_summary } =
-      req.body as ProposalReq;
+    const {
+      client_name,
+      job_title,
+      proposal_tone,
+      job_summary,
+      optimizer_record_id,
+    } = req.body as ProposalReq;
     if (!client_name || !job_title || !proposal_tone || !job_summary) {
       return res
         .status(400)
@@ -892,6 +907,27 @@ export async function generateProposal(req: Request, res: Response) {
     // 4. Extract profile data
     const { displayName, portfolioLink, professionalTitle } = profileData;
 
+    // 4b. Optional Profile Optimizer record for role-fit + tailored proposal
+    let optimizerProfileContext: string | null = null;
+    let sanitizedOptimizerRecordId: string | undefined;
+    if (optimizer_record_id?.trim()) {
+      sanitizedOptimizerRecordId = optimizer_record_id.trim();
+      const optimizerRecord = await timedDb(req, () =>
+        getOptimizerHistoryById(userId, sanitizedOptimizerRecordId!),
+      );
+      if (!optimizerRecord) {
+        return res
+          .status(404)
+          .json(
+            newErrorResponse(
+              "Not Found",
+              "Optimizer profile not found or access denied",
+            ),
+          );
+      }
+      optimizerProfileContext = formatOptimizerProfileContext(optimizerRecord);
+    }
+
     // 5. Sanitize input (simple trim)
     const sanitizedClientName = client_name.trim();
     const sanitizedJobTitle = job_title.trim();
@@ -901,7 +937,12 @@ export async function generateProposal(req: Request, res: Response) {
     const inputContent = `Client Name: ${sanitizedClientName}\nJob Title: ${sanitizedJobTitle}${
       professionalTitle ? `\nYour Professional Title: ${professionalTitle}` : ""
     }\nProposal Tone: ${proposal_tone}\n\nJob Summary:\n${sanitizedJobSummary}`;
-    const content = proposalPrompt(inputContent, displayName, portfolioLink);
+    const content = proposalPrompt(
+      inputContent,
+      displayName,
+      portfolioLink,
+      optimizerProfileContext,
+    );
 
     // 5. Call AI model
     let aiResponseText = "";
@@ -1100,6 +1141,9 @@ export async function generateProposal(req: Request, res: Response) {
           job_title: sanitizedJobTitle,
           proposal_tone: proposal_tone,
           job_summary: sanitizedJobSummary,
+          ...(sanitizedOptimizerRecordId
+            ? { optimizer_record_id: sanitizedOptimizerRecordId }
+            : {}),
         },
         proposalResponse,
       ),
@@ -1285,15 +1329,10 @@ export async function refineProposal(req: Request, res: Response) {
     const { proposalId, refinementType, newTone, customInstruction } =
       req.body as RefineProposalReq;
 
-    if (!proposalId || !refinementType) {
+    if (!proposalId) {
       return res
         .status(400)
-        .json(
-          newErrorResponse(
-            "Invalid Request",
-            "Missing proposalId or refinementType",
-          ),
-        );
+        .json(newErrorResponse("Invalid Request", "Missing proposalId"));
     }
 
     const validRefinementTypes: RefinementAction[] = [
@@ -1305,44 +1344,75 @@ export async function refineProposal(req: Request, res: Response) {
       "custom",
     ];
 
-    if (!validRefinementTypes.includes(refinementType)) {
+    const trimmedCustom = customInstruction?.trim() ?? "";
+
+    if (!refinementType && !trimmedCustom) {
+      return res
+        .status(400)
+        .json(
+          newErrorResponse(
+            "Invalid Request",
+            "Provide a refinement type or describe how to improve the proposal",
+          ),
+        );
+    }
+
+    if (refinementType && !validRefinementTypes.includes(refinementType)) {
       return res
         .status(400)
         .json(newErrorResponse("Invalid Request", "Invalid refinement type"));
     }
 
-    // Change tone requires newTone
-    if (refinementType === "change_tone" && !newTone) {
+    let effectiveRefinementType: RefinementAction =
+      refinementType ?? "custom";
+    let effectiveCustomInstruction: string | undefined;
+
+    if (trimmedCustom) {
+      const instructionCheck = validateProposalRefineInstruction(trimmedCustom);
+      if (!instructionCheck.valid) {
+        return res
+          .status(400)
+          .json(
+            newErrorResponse(
+              "Validation Error",
+              instructionCheck.message ||
+                "Invalid refinement instruction",
+            ),
+          );
+      }
+
+      if (
+        refinementType &&
+        refinementType !== "custom" &&
+        refinementType !== "change_tone"
+      ) {
+        effectiveRefinementType = "custom";
+        effectiveCustomInstruction = `Quick improvement: ${REFINEMENT_LABELS[refinementType]}.\n\nAdditional instructions: ${instructionCheck.sanitized}`;
+      } else if (refinementType === "change_tone") {
+        effectiveRefinementType = "custom";
+        effectiveCustomInstruction = `Change the proposal tone to ${newTone || "as selected"}.\n\nAdditional instructions: ${instructionCheck.sanitized}`;
+      } else {
+        effectiveRefinementType = "custom";
+        effectiveCustomInstruction = instructionCheck.sanitized;
+      }
+    } else if (refinementType === "custom") {
+      return res
+        .status(400)
+        .json(
+          newErrorResponse(
+            "Invalid Request",
+            "Describe how you want the proposal improved (10–500 characters)",
+          ),
+        );
+    }
+
+    if (effectiveRefinementType === "change_tone" && !newTone) {
       return res
         .status(400)
         .json(
           newErrorResponse(
             "Invalid Request",
             "newTone required for change_tone refinement",
-          ),
-        );
-    }
-
-    // Custom refinement requires customInstruction
-    if (refinementType === "custom" && !customInstruction) {
-      return res
-        .status(400)
-        .json(
-          newErrorResponse(
-            "Invalid Request",
-            "customInstruction is required for custom refinement",
-          ),
-        );
-    }
-
-    // Validate customInstruction length if provided
-    if (customInstruction && customInstruction.length > 1000) {
-      return res
-        .status(400)
-        .json(
-          newErrorResponse(
-            "Validation Error",
-            "customInstruction must be 1000 characters or less",
           ),
         );
     }
@@ -1397,12 +1467,12 @@ export async function refineProposal(req: Request, res: Response) {
     // 5. Call AI for refinement
     const prompt = refineProposalPrompt(
       currentProposal,
-      refinementType,
+      effectiveRefinementType,
       proposal.jobTitle,
       proposal.clientName,
       newTone || proposal.proposalTone,
       displayName,
-      customInstruction,
+      effectiveCustomInstruction,
     );
 
     let aiResponseText = "";
@@ -1467,9 +1537,27 @@ export async function refineProposal(req: Request, res: Response) {
     }
 
     // 6. Parse AI response
+    let parsedRefine: ProposalResponse | AIErrorResponse;
     let refinedProposal: ProposalResponse;
     try {
-      refinedProposal = JSON.parse(aiResponseText) as ProposalResponse;
+      parsedRefine = JSON.parse(aiResponseText) as ProposalResponse | AIErrorResponse;
+
+      if ("error" in parsedRefine && parsedRefine.error === true) {
+        return res.status(400).json(
+          newErrorResponse(
+            parsedRefine.code === "OUT_OF_SCOPE"
+              ? "Out of Scope"
+              : "Invalid Request",
+            parsedRefine.message ||
+              "That request is outside proposal refinement. Describe how you want the proposal changed.",
+          ),
+        );
+      }
+
+      refinedProposal = parsedRefine as ProposalResponse;
+      if (currentProposal.roleFit && !refinedProposal.roleFit) {
+        refinedProposal.roleFit = currentProposal.roleFit;
+      }
     } catch (err) {
       console.error("[refineProposal] JSON parse failed:", err);
       return res
@@ -1495,7 +1583,7 @@ export async function refineProposal(req: Request, res: Response) {
     await storeRefinement(
       proposalId,
       userId,
-      refinementType,
+      effectiveRefinementType,
       currentProposal,
       refinedProposal,
       refinementOrder,
@@ -1724,6 +1812,230 @@ export async function getUserQuota(req: Request, res: Response) {
         newErrorResponse(
           "Internal Server Error",
           "An error occurred. Please try again or contact support.",
+        ),
+      );
+  }
+}
+
+const VALID_TARGET_SECTIONS: OptimizerTargetSection[] = [
+  "all",
+  "weaknessesAndOptimization",
+  "optimizedProfileOverview",
+  "suggestedProjectTitles",
+  "recommendedVisuals",
+  "beforeAfterComparison",
+];
+
+export async function refineProfile(req: Request, res: Response) {
+  try {
+    const userId = req.userID as string;
+    if (!userId) {
+      return res
+        .status(401)
+        .json(newErrorResponse("Unauthorized", "User not authenticated"));
+    }
+
+    const { recordId, instruction, targetSection = "all" } =
+      req.body as RefineProfileReq;
+
+    if (!recordId || !instruction?.trim()) {
+      return res
+        .status(400)
+        .json(
+          newErrorResponse(
+            "Invalid Request",
+            "recordId and instruction are required",
+          ),
+        );
+    }
+
+    const instructionCheck = validateRefineInstruction(instruction, "profile");
+    if (!instructionCheck.valid) {
+      return res
+        .status(400)
+        .json(
+          newErrorResponse(
+            "Validation Error",
+            instructionCheck.message ||
+              "Invalid refinement instruction",
+          ),
+        );
+    }
+    const trimmedInstruction = instructionCheck.sanitized;
+
+    if (!VALID_TARGET_SECTIONS.includes(targetSection)) {
+      return res
+        .status(400)
+        .json(newErrorResponse("Invalid Request", "Invalid targetSection"));
+    }
+
+    const rootRecord = await getOptimizerHistoryById(userId, recordId);
+    if (!rootRecord) {
+      return res
+        .status(404)
+        .json(newErrorResponse("Not Found", "Optimizer record not found"));
+    }
+
+    const rootId = resolveOptimizerRootId(rootRecord);
+    const profileData = await getUserProfileData(userId, req.userDisplayName);
+    const userTierId = profileData?.tierId || null;
+    const unlimitedRefine = isUnlimitedRefineTier(userTierId);
+
+    if (!unlimitedRefine) {
+      const refinementCount = await countOptimizerRefinementsForRoot(
+        rootId,
+        userId,
+      );
+      if (refinementCount >= STARTER_REFINEMENTS_PER_ROOT) {
+        return res
+          .status(429)
+          .json(
+            newErrorResponse(
+              "Refinement Limit Reached",
+              `You can refine this profile up to ${STARTER_REFINEMENTS_PER_ROOT} times on your plan. Upgrade for unlimited refinements.`,
+            ),
+          );
+      }
+    }
+
+    const latest = await getLatestOptimizerVersion(rootId, userId);
+    const versions = await getOptimizerVersionChain(rootId, userId);
+    const nextVersion = (versions[versions.length - 1]?.versionNumber ?? 1) + 1;
+
+    const prompt = refineProfilePrompt(
+      latest.response,
+      trimmedInstruction,
+      targetSection,
+      rootRecord.originalInput,
+      rootRecord.optimizerType,
+    );
+
+    let aiResponseText = "";
+    try {
+      aiResponseText = await timedExternal(req, () =>
+        callGemini(
+          prompt,
+          refineProfileSystemInstruction(rootRecord.optimizerType),
+        ),
+      );
+    } catch (err: unknown) {
+      console.error("[refineProfile] AI call failed:", err);
+      observeControllerError(
+        req,
+        "external_api_error",
+        "RefineProfileExternalApiError",
+        "AI service call failed",
+        err,
+      );
+
+      if (err instanceof SystemOverrideError) {
+        return res
+          .status(400)
+          .json(
+            newErrorResponse(
+              "Invalid Request",
+              "The refinement request could not be processed.",
+            ),
+          );
+      }
+
+      if (err instanceof ValidationError) {
+        return res
+          .status(400)
+          .json(
+            newErrorResponse(
+              "Validation Error",
+              err.message || "Invalid refinement request.",
+            ),
+          );
+      }
+
+      return res
+        .status(500)
+        .json(
+          newErrorResponse(
+            "AI Service Error",
+            "Failed to refine profile. Please try again.",
+          ),
+        );
+    }
+
+    let refinedResponse: OptimizerResponseSections;
+    try {
+      const parsed = JSON.parse(aiResponseText) as OptimizerResponseSections & {
+        error?: boolean;
+        message?: string;
+      };
+      if (parsed.error) {
+        return res
+          .status(400)
+          .json(
+            newErrorResponse(
+              "Invalid Request",
+              parsed.message || "Refinement could not be applied.",
+            ),
+          );
+      }
+      refinedResponse = parsed;
+    } catch (err) {
+      console.error("[refineProfile] JSON parse failed:", err);
+      return res
+        .status(500)
+        .json(
+          newErrorResponse(
+            "Processing Error",
+            "Failed to process refined profile.",
+          ),
+        );
+    }
+
+    const refinementLabel = truncateInstructionLabel(trimmedInstruction);
+    const versionId = await storeOptimizerRefinement({
+      userId,
+      rootRecordId: rootId,
+      optimizerType: rootRecord.optimizerType,
+      originalInput: rootRecord.originalInput,
+      response: refinedResponse,
+      userInstruction: trimmedInstruction,
+      targetSection,
+      refinementLabel,
+      versionNumber: nextVersion,
+    });
+
+    const refinementsRemaining = unlimitedRefine
+      ? -1
+      : Math.max(
+          0,
+          STARTER_REFINEMENTS_PER_ROOT -
+            (await countOptimizerRefinementsForRoot(rootId, userId)),
+        );
+
+    return res.status(200).json(
+      newSuccessResponse("Profile Refined", "Profile refined successfully", {
+        ...refinedResponse,
+        optimizerRecordId: rootId,
+        versionId,
+        versionNumber: nextVersion,
+        refinementLabel,
+        unlimitedRefine,
+        refinementsRemaining,
+      }),
+    );
+  } catch (err) {
+    console.error("[refineProfile] Error:", err);
+    observeControllerError(
+      req,
+      "internal_failure",
+      "RefineProfileUnhandledError",
+      "Unhandled refine profile error",
+      err,
+    );
+    return res
+      .status(500)
+      .json(
+        newErrorResponse(
+          "Internal Server Error",
+          "An error occurred while refining the profile.",
         ),
       );
   }

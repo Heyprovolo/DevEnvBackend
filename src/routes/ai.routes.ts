@@ -17,6 +17,7 @@ import {
   getOptimizerHistoryByIdController,
   cleanupOldOptimizerHistoryController,
   getOptimizerHistory,
+  refineProfile,
 } from "../controllers/optimize.controller.ts";
 
 const aiRouter: ExpressRouter = Router();
@@ -581,8 +582,8 @@ aiRouter.get(
  *                 description: New tone (required only for change_tone refinement)
  *               customInstruction:
  *                 type: string
- *                 maxLength: 1000
- *                 description: Custom instruction from the user (required for 'custom' refinement type). Example - "Make the opening more personal" or "Add more about my React experience"
+ *                 maxLength: 500
+ *                 description: Custom instruction from the user (10–500 characters; required for 'custom' refinement type). Example - "Make the opening more personal" or "Add more about my React experience"
  *     responses:
  *       200:
  *         description: Proposal refined successfully
@@ -815,6 +816,13 @@ aiRouter.get(
   authMiddleware,
   emailVerificationMiddleware,
   getOptimizerHistoryByIdController,
+);
+
+aiRouter.post(
+  "/refine-profile",
+  authMiddleware,
+  emailVerificationMiddleware,
+  refineProfile,
 );
 
 /**
